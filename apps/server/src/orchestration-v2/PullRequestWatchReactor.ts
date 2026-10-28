@@ -4,6 +4,7 @@ import {
   type OrchestrationV2Notification,
   type PullRequestActivity,
   type PullRequestComment,
+  type PullRequestDetail,
   type PullRequestRef,
   type PullRequestThreadCommentsResult,
   type ThreadPullRequestLink,
@@ -38,6 +39,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import {
   evaluatePullRequestWatch,
   PULL_REQUEST_WATCH_NO_CHECKS_MS,
+  pullRequestWatchEndMessage,
   pullRequestWatchMessage,
 } from "./pullRequestWatch.ts";
 
@@ -399,27 +401,23 @@ export const make = Effect.gen(function* () {
       ),
   );
 
-  const closed = (target: WatchTarget) =>
-    record(target, null, {
-      text: `Pull request #${target.link.number} (${target.link.url}) was closed, so T3 Code stopped watching it. Call watch_pull_request if it reopens.`,
-      notification: {
-        source: { kind: "monitor" },
-        outcome: "updated",
-        summary: `#${target.link.number}: closed, stopped watching`,
-      },
-    }).pipe(
+  const finished = (target: WatchTarget, detail: PullRequestDetail) =>
+    record(
+      target,
+      null,
+      pullRequestWatchEndMessage({ number: target.link.number, url: target.link.url, detail }),
+    ).pipe(
       Effect.tap(() => woke(target)),
-      Effect.tap(() => ended(target, "closed")),
+      Effect.tap(() => ended(target, detail.state === "merged" ? "merged" : "closed")),
     );
 
-  const endsWithoutRead = ({ thread, link }: WatchTarget): WatchEndReason | undefined =>
-    link.snapshot?.state === "merged"
-      ? "merged"
-      : thread.settledOverride === "settled" || thread.settledAt !== null
-        ? "settled"
-        : thread.lineage.relationshipToParent === "subagent"
-          ? "subagent"
-          : undefined;
+  // A merged snapshot still gets one read, so the wake can name the merge commit.
+  const endsWithoutRead = ({ thread }: WatchTarget): WatchEndReason | undefined =>
+    thread.settledOverride === "settled" || thread.settledAt !== null
+      ? "settled"
+      : thread.lineage.relationshipToParent === "subagent"
+        ? "subagent"
+        : undefined;
 
   const eachTarget = <E>(
     group: WatchGroup,
@@ -528,11 +526,7 @@ export const make = Effect.gen(function* () {
     }
     if (detail.state !== "open") {
       lastReads.delete(group.key);
-      return yield* eachTarget(group, (target) =>
-        detail.state === "closed"
-          ? closed(target)
-          : record(target, null).pipe(Effect.tap(() => ended(target, "merged"))),
-      );
+      return yield* eachTarget(group, (target) => finished(target, detail));
     }
 
     // Never advance the remark watermark past comments an incomplete read could have missed.
