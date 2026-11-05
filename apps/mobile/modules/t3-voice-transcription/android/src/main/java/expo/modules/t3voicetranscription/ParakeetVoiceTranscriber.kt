@@ -23,7 +23,8 @@ internal data class ParakeetVoiceResult(
   val decodeMs: Double,
   val inferenceMs: Double,
   val audioSampleRateHz: Int,
-  val audioDurationSeconds: Double
+  val audioDurationSeconds: Double,
+  val audioSourceMime: String
 )
 
 internal class ParakeetVoiceTranscriber(context: Context) : Closeable {
@@ -89,7 +90,8 @@ internal class ParakeetVoiceTranscriber(context: Context) : Closeable {
       decodeMs,
       elapsedMs(inferenceStart),
       audio.sampleRate,
-      audio.samples.size.toDouble() / audio.sampleRate
+      audio.samples.size.toDouble() / audio.sampleRate,
+      audio.sourceMime
     )
   }
 

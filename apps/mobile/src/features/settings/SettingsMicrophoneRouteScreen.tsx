@@ -251,6 +251,11 @@ export function SettingsMicrophoneRouteScreen() {
                 <ListRowLayout
                   label={nativeDiagnostics.engine}
                   description={[
+                    ...(nativeDiagnostics.audioSourceMime === undefined
+                      ? []
+                      : [
+                          `Source format: ${nativeDiagnostics.audioSourceMime === "audio/raw" ? "PCM" : nativeDiagnostics.audioSourceMime === "audio/mp4a-latm" ? "AAC" : nativeDiagnostics.audioSourceMime}`,
+                        ]),
                     ...(nativeDiagnostics.audioSampleRateHz === undefined
                       ? []
                       : [

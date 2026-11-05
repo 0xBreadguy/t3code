@@ -14,6 +14,7 @@ import {
   rememberMicrophones,
 } from "../../lib/microphonePriority";
 import { getLocalVoiceTranscriber } from "../../native/voiceTranscription";
+import { createPcmVoiceRecorder } from "../../native/pcmVoiceRecorder";
 import { DEFAULT_VOICE_TRANSCRIPTION_ENGINE } from "../../lib/voiceTranscriptionEngine";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { getNativeShowcaseScene } from "../showcase/nativeShowcaseScene";
@@ -95,12 +96,13 @@ const voiceInputAtom = Atom.make((get) => {
     void session.controller.appMovedToBackground();
   });
   const recorder = createLazyVoiceRecorder({
-    create: () =>
-      new AudioModule.AudioRecorder(
-        Platform.OS === "android" && getEngine() === "parakeet"
-          ? PARAKEET_RECORDING_OPTIONS
-          : VOICE_RECORDING_OPTIONS,
-      ),
+    create: () => {
+      if (Platform.OS === "android" && getEngine() === "parakeet")
+        return (
+          createPcmVoiceRecorder() ?? new AudioModule.AudioRecorder(PARAKEET_RECORDING_OPTIONS)
+        );
+      return new AudioModule.AudioRecorder(VOICE_RECORDING_OPTIONS);
+    },
     onStatus: (status: RecordingStatus) => {
       session.controller.handleRecorderStatus({
         isFinished: status.isFinished,
@@ -140,8 +142,12 @@ const voiceInputAtom = Atom.make((get) => {
       }
     },
     releaseRecording: async () => {
-      if (audioToken) await releaseAudioSession(audioToken);
-      audioToken = null;
+      try {
+        if (Platform.OS === "android") await recorder.release();
+      } finally {
+        if (audioToken) await releaseAudioSession(audioToken);
+        audioToken = null;
+      }
     },
     deleteRecording: (uri) => new File(uri).delete(),
     sampleRecording: () => {
@@ -168,7 +174,7 @@ const voiceInputAtom = Atom.make((get) => {
   get.addFinalizer(() => {
     permission.dispose();
     session.dispose();
-    recorder.release();
+    void recorder.release().catch(() => {});
   });
   return { session, audioLevels, localVoiceTranscriberAtom };
 }).pipe(Atom.keepAlive, Atom.withLabel("mobile:voice-input"));

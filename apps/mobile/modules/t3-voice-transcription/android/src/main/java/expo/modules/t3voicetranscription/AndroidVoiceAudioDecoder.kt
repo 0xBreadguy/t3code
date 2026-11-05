@@ -16,7 +16,11 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 
-internal data class DecodedVoiceAudio(val samples: FloatArray, val sampleRate: Int)
+internal data class DecodedVoiceAudio(
+  val samples: FloatArray,
+  val sampleRate: Int,
+  val sourceMime: String = MediaFormat.MIMETYPE_AUDIO_RAW
+)
 
 // AAC priming/padding can slightly outlast the five-minute recording timer.
 private const val VOICE_DECODE_MAX_SECONDS = 301
@@ -63,7 +67,7 @@ private suspend fun decodeLocalVoiceAudio(context: Context, uri: String): Decode
       readRawVoiceAudio(extractor, output)
       return output.finish()
     }
-    return decodeCompressedVoiceAudio(extractor, mime, inputFormat)
+    return decodeCompressedVoiceAudio(extractor, mime, inputFormat).copy(sourceMime = mime)
   } finally {
     runCatching { extractor.release() }
   }

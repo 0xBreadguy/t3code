@@ -7,12 +7,15 @@ import expo.modules.kotlin.Promise
 import expo.modules.kotlin.functions.Coroutine
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
+import expo.modules.kotlin.modules.ModuleDefinitionBuilder
+import java.io.File
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
@@ -25,11 +28,13 @@ class T3VoiceTranscriptionModule : Module() {
   private val lock = Any()
   private var operation: Pair<Int, Job>? = null
   private var parakeet: ParakeetVoiceTranscriber? = null
+  private val pcm = PcmRecordingRegistry(::createPcmSession)
 
   @Volatile private var diagnostics: Map<String, Any> = emptyMap()
 
   override fun definition() = ModuleDefinition {
     Name("T3VoiceTranscription")
+    pcmRecordingFunctions()
 
     Function("isAvailable") { Build.VERSION.SDK_INT >= Build.VERSION_CODES.S }
     Function("isParakeetAvailable") {
@@ -77,12 +82,63 @@ class T3VoiceTranscriptionModule : Module() {
     }
 
     OnDestroy {
+      pcm.close()
+      releaseInterruptedPcm()
       // Wait for synchronous native inference to leave before releasing its model.
       lifetime.invokeOnCompletion {
+        pcm.deleteOrphanFiles()
         runCatching { parakeet?.close() }
         parakeet = null
       }
       scope.cancel()
+    }
+  }
+
+  private fun ModuleDefinitionBuilder.pcmRecordingFunctions() {
+    Events("pcmRecordingStatus")
+    Function("isPcmRecordingAvailable") { Build.VERSION.SDK_INT >= Build.VERSION_CODES.S }
+    AsyncFunction("preparePcmRecording").Coroutine { id: Int ->
+      withContext(scope.coroutineContext) { pcm.prepare(id).toMap() }
+    }
+    Function("startPcmRecording") { id: Int, seconds: Double -> pcm.start(id, seconds) }
+    AsyncFunction("stopPcmRecording").Coroutine { id: Int ->
+      withContext(scope.coroutineContext) { pcm.stop(id).toMap() }
+    }
+    AsyncFunction("releasePcmRecording").Coroutine { id: Int ->
+      withContext(scope.coroutineContext) { pcm.release(id) }
+    }
+    Function("getPcmRecordingStatus") { id: Int -> pcm.status(id)?.toMap() }
+    Function("getPcmRecordingInputs") {
+      AndroidPcmCaptureInput.inputs(requireNotNull(appContext.reactContext))
+    }
+    Function("setPcmRecordingInput") { id: Int, uid: String -> pcm.setInput(id, uid) }
+    OnActivityEntersBackground {
+      pcm.setBackground(true)
+      releaseInterruptedPcm()
+    }
+    OnActivityEntersForeground { pcm.setBackground(false) }
+  }
+
+  private fun createPcmSession(id: Int): PcmRecordingSession {
+    val context = requireNotNull(appContext.reactContext)
+    val input = AndroidPcmCaptureInput.create(context)
+    var file: File? = null
+    return runCatching {
+      val output = File.createTempFile("t3-dictation-", ".wav", context.cacheDir)
+      file = output
+      pcm.ownFile(output)
+      PcmRecordingSession(id, output, input, scope, {
+        sendEvent("pcmRecordingStatus", it.toMap())
+      })
+    }.onFailure {
+      runCatching { input.close() }
+      file?.delete()
+    }.getOrThrow()
+  }
+
+  private fun releaseInterruptedPcm() {
+    scope.launch(start = CoroutineStart.UNDISPATCHED) {
+      withContext(NonCancellable + Dispatchers.IO) { pcm.releaseInterrupted() }
     }
   }
 
@@ -141,6 +197,7 @@ class T3VoiceTranscriptionModule : Module() {
           "inferenceMs" to result.inferenceMs,
           "audioSampleRateHz" to result.audioSampleRateHz,
           "audioDurationSeconds" to result.audioDurationSeconds,
+          "audioSourceMime" to result.audioSourceMime,
           "totalMs" to elapsedMs(started)
         )
         result.text

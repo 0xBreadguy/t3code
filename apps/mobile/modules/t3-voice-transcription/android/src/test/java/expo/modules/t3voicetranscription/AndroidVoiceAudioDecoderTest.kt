@@ -133,6 +133,7 @@ class AndroidVoiceAudioDecoderTest {
     }
     val decoded = output.finish()
     assertEquals(48000, decoded.sampleRate)
+    assertEquals("audio/raw", decoded.sourceMime)
     assertArrayEquals(floatArrayOf(.25f, -.5f), decoded.samples, 0f)
   }
 
