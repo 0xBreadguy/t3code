@@ -5,4 +5,6 @@ export interface VoiceTranscriptionDiagnostics {
   readonly decodeMs?: number;
   readonly inferenceMs?: number;
   readonly totalMs?: number;
+  readonly audioSampleRateHz?: number;
+  readonly audioDurationSeconds?: number;
 }

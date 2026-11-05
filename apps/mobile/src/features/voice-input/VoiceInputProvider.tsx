@@ -45,6 +45,13 @@ const VOICE_RECORDING_OPTIONS = {
   isMeteringEnabled: true,
   ...(Platform.OS === "ios" ? IOS_RECORDING_OPTIONS : ANDROID_RECORDING_OPTIONS),
 };
+// Matching Parakeet's input rate reduces AAC conversion work after recording.
+const PARAKEET_RECORDING_OPTIONS = {
+  ...VOICE_RECORDING_OPTIONS,
+  sampleRate: 16000,
+  numberOfChannels: 1,
+  bitRate: 64000,
+};
 
 function keepScreenAwake(tag: string): () => void {
   const activation = activateKeepAwakeAsync(tag);
@@ -88,7 +95,12 @@ const voiceInputAtom = Atom.make((get) => {
     void session.controller.appMovedToBackground();
   });
   const recorder = createLazyVoiceRecorder({
-    create: () => new AudioModule.AudioRecorder(VOICE_RECORDING_OPTIONS),
+    create: () =>
+      new AudioModule.AudioRecorder(
+        Platform.OS === "android" && getEngine() === "parakeet"
+          ? PARAKEET_RECORDING_OPTIONS
+          : VOICE_RECORDING_OPTIONS,
+      ),
     onStatus: (status: RecordingStatus) => {
       session.controller.handleRecorderStatus({
         isFinished: status.isFinished,

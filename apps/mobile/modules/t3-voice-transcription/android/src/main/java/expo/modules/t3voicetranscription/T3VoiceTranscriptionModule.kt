@@ -139,6 +139,8 @@ class T3VoiceTranscriptionModule : Module() {
           "status" to "complete",
           "decodeMs" to result.decodeMs,
           "inferenceMs" to result.inferenceMs,
+          "audioSampleRateHz" to result.audioSampleRateHz,
+          "audioDurationSeconds" to result.audioDurationSeconds,
           "totalMs" to elapsedMs(started)
         )
         result.text

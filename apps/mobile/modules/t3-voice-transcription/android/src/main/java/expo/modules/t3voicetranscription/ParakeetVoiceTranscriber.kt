@@ -21,7 +21,9 @@ import org.json.JSONObject
 internal data class ParakeetVoiceResult(
   val text: String,
   val decodeMs: Double,
-  val inferenceMs: Double
+  val inferenceMs: Double,
+  val audioSampleRateHz: Int,
+  val audioDurationSeconds: Double
 )
 
 internal class ParakeetVoiceTranscriber(context: Context) : Closeable {
@@ -82,7 +84,13 @@ internal class ParakeetVoiceTranscriber(context: Context) : Closeable {
     } finally {
       stream.release()
     }
-    ParakeetVoiceResult(text.trim(), decodeMs, elapsedMs(inferenceStart))
+    ParakeetVoiceResult(
+      text.trim(),
+      decodeMs,
+      elapsedMs(inferenceStart),
+      audio.sampleRate,
+      audio.samples.size.toDouble() / audio.sampleRate
+    )
   }
 
   override fun close() {

@@ -251,15 +251,25 @@ export function SettingsMicrophoneRouteScreen() {
                 <ListRowLayout
                   label={nativeDiagnostics.engine}
                   description={[
-                    ["Preparation", nativeDiagnostics.preparationMs],
-                    ["Audio conversion", nativeDiagnostics.decodeMs],
-                    ["Recognition", nativeDiagnostics.inferenceMs],
-                    ["Total processing", nativeDiagnostics.totalMs],
-                  ]
-                    .flatMap(([label, duration]) =>
+                    ...(nativeDiagnostics.audioSampleRateHz === undefined
+                      ? []
+                      : [
+                          `Decoded audio: ${nativeDiagnostics.audioSampleRateHz.toLocaleString()} Hz`,
+                        ]),
+                    ...(nativeDiagnostics.audioDurationSeconds === undefined
+                      ? []
+                      : [
+                          `Decoded duration: ${nativeDiagnostics.audioDurationSeconds.toFixed(1)} s`,
+                        ]),
+                    ...[
+                      ["Preparation", nativeDiagnostics.preparationMs],
+                      ["Audio conversion", nativeDiagnostics.decodeMs],
+                      ["Recognition", nativeDiagnostics.inferenceMs],
+                      ["Total processing", nativeDiagnostics.totalMs],
+                    ].flatMap(([label, duration]) =>
                       typeof duration === "number" ? [`${label}: ${formatTiming(duration)}`] : [],
-                    )
-                    .join(" · ")}
+                    ),
+                  ].join(" · ")}
                 />
               ) : null}
             </SettingsSection>
