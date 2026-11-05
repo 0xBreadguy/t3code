@@ -24,6 +24,11 @@ class GoogleVoiceTranscriberTest {
       ),
       Triple(listOf("最初の文。", "次の文。"), emptyList(), "最初の文。次の文。"),
       Triple(
+        listOf("The completed sentence."),
+        listOf("The completed sentence."),
+        "The completed sentence."
+      ),
+      Triple(
         listOf("The beginning."),
         listOf(" An unfinished ending", " The final sentence."),
         "The beginning. The final sentence."

@@ -98,11 +98,13 @@ internal suspend fun collectGoogleVoiceTranscript(
 ): String {
   val text = StringBuilder()
   var partial = ""
+  var lastFinal = ""
   responses.collect { response ->
     when (response) {
       // ONE_SHOT files can emit multiple final utterances, with separators supplied by the SDK.
       is SpeechRecognizerResponse.FinalTextResponse -> {
         text.append(response.text)
+        lastFinal = response.text
         partial = ""
       }
       is SpeechRecognizerResponse.PartialTextResponse -> partial = response.text
@@ -110,8 +112,9 @@ internal suspend fun collectGoogleVoiceTranscript(
       else -> Unit
     }
   }
-  // Some file sessions complete with a trailing partial instead of another final event.
-  return text.append(partial).toString().trim()
+  // ML Kit can emit a stale copy of its last final as the trailing partial.
+  if (partial != lastFinal) text.append(partial)
+  return text.toString().trim()
 }
 
 internal class MlKitSpeechClient(context: Context, locale: Locale, mode: Int) : GoogleSpeechClient {
