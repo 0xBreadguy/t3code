@@ -1,14 +1,11 @@
 import type { VoiceInputPhase, VoiceInputState } from "@t3tools/client-runtime/voice-input";
-import { memo, useState, type ReactNode } from "react";
-import { Linking, Pressable, Text as SystemText, View, type LayoutChangeEvent } from "react-native";
+import { memo } from "react";
+import { Linking, Pressable, Text as SystemText, View } from "react-native";
 import Animated, {
   Easing,
   ReduceMotion,
   useAnimatedStyle,
-  useDerivedValue,
-  useReducedMotion,
   withTiming,
-  type EntryExitAnimationFunction,
   type SharedValue,
 } from "react-native-reanimated";
 
@@ -25,124 +22,13 @@ const DICTATION_TIMING = {
   easing: Easing.out(Easing.cubic),
   reduceMotion: ReduceMotion.System,
 } as const;
-const TOOLBAR_FLIP_TIMING = {
-  duration: 260,
-  easing: Easing.inOut(Easing.cubic),
-  reduceMotion: ReduceMotion.System,
-} as const;
-const TOOLBAR_HALF_HEIGHT = 22;
-const TOOLBAR_PERSPECTIVE = 600;
-
-function toolbarFlip(fromDegrees: number, toDegrees: number): EntryExitAnimationFunction {
-  return () => {
-    "worklet";
-    const fromRadians = (fromDegrees * Math.PI) / 180;
-    const toRadians = (toDegrees * Math.PI) / 180;
-    const fromSine = Math.sin(fromRadians);
-    const toSine = Math.sin(toRadians);
-    return {
-      initialValues: {
-        opacity: fromDegrees === 0 ? 1 : 0,
-        transform: [
-          { perspective: TOOLBAR_PERSPECTIVE },
-          { translateY: -TOOLBAR_HALF_HEIGHT * fromSine },
-          { rotateX: `${fromDegrees}deg` },
-        ],
-      },
-      animations: {
-        opacity: withTiming(toDegrees === 0 ? 1 : 0, TOOLBAR_FLIP_TIMING),
-        transform: [
-          { perspective: TOOLBAR_PERSPECTIVE },
-          {
-            translateY: withTiming(-TOOLBAR_HALF_HEIGHT * toSine, {
-              ...TOOLBAR_FLIP_TIMING,
-              easing: (time) => {
-                const angle =
-                  fromRadians + (toRadians - fromRadians) * TOOLBAR_FLIP_TIMING.easing(time);
-                return (Math.sin(angle) - fromSine) / (toSine - fromSine);
-              },
-            }),
-          },
-          { rotateX: withTiming(`${toDegrees}deg`, TOOLBAR_FLIP_TIMING) },
-        ],
-      },
-    };
-  };
-}
-
-const DRAFT_TOOLBAR_ENTERING = toolbarFlip(90, 0);
-const DRAFT_TOOLBAR_EXITING = toolbarFlip(0, 90);
-const DICTATION_TOOLBAR_ENTERING = toolbarFlip(-90, 0);
-const DICTATION_TOOLBAR_EXITING = toolbarFlip(0, -90);
 const WAVEFORM_BAR_HEIGHT = 32;
 const WAVEFORM_MIN_BAR_HEIGHT = 2;
-const WAVEFORM_BAR_SPACING = 5;
 const WAVEFORM_TIMING = {
   duration: 100,
   easing: Easing.out(Easing.quad),
   reduceMotion: ReduceMotion.System,
 } as const;
-
-export function ComposerDictationDraftContent(props: {
-  readonly children: ReactNode;
-  readonly className?: string;
-  readonly compact: boolean;
-  readonly hidden: boolean;
-}) {
-  const hidden = props.hidden;
-  const rotation = useDerivedValue(() => withTiming(hidden ? 1 : 0, TOOLBAR_FLIP_TIMING));
-  const compact = props.compact;
-  const animatedStyle = useAnimatedStyle(() => ({
-    opacity: compact ? 1 - rotation.value : 1,
-    transform: compact
-      ? [
-          { perspective: TOOLBAR_PERSPECTIVE },
-          { translateY: -TOOLBAR_HALF_HEIGHT * Math.sin((rotation.value * Math.PI) / 2) },
-          { rotateX: `${rotation.value * 90}deg` },
-        ]
-      : [],
-  }));
-
-  return (
-    <Animated.View
-      accessibilityElementsHidden={props.hidden}
-      importantForAccessibility={props.hidden ? "no-hide-descendants" : "auto"}
-      collapsable={false}
-      className={props.className}
-      pointerEvents={props.hidden ? "none" : "auto"}
-      style={[animatedStyle, { backfaceVisibility: "hidden" }]}
-    >
-      {props.children}
-    </Animated.View>
-  );
-}
-
-export function ComposerDictationToolbar(props: {
-  readonly children: ReactNode;
-  readonly showsDictation: boolean;
-  readonly visible?: boolean;
-}) {
-  // Android can drop the reduced-motion flip's final frame, leaving the toolbar invisible.
-  const reducedMotion = useReducedMotion();
-  const entering = props.showsDictation ? DICTATION_TOOLBAR_ENTERING : DRAFT_TOOLBAR_ENTERING;
-  const exiting = props.showsDictation ? DICTATION_TOOLBAR_EXITING : DRAFT_TOOLBAR_EXITING;
-
-  return (
-    <View className="relative h-[44px] overflow-hidden">
-      {props.visible !== false ? (
-        <Animated.View
-          key={props.showsDictation ? "dictation" : "draft"}
-          className="absolute inset-0"
-          entering={reducedMotion ? undefined : entering}
-          exiting={reducedMotion ? undefined : exiting}
-          style={{ backfaceVisibility: "hidden" }}
-        >
-          {props.children}
-        </Animated.View>
-      ) : null}
-    </View>
-  );
-}
 
 const WaveformBar = memo(function WaveformBar(props: {
   readonly audioLevels: SharedValue<ReadonlyArray<number>>;
@@ -193,41 +79,6 @@ export const CompactVoiceWaveform = memo(function CompactVoiceWaveform(props: {
           audioLevels={props.audioLevels}
           height={COMPACT_WAVEFORM_BAR_HEIGHT}
           sampleIndex={VOICE_WAVEFORM_SAMPLE_COUNT - COMPACT_WAVEFORM_BAR_COUNT + index}
-        />
-      ))}
-    </View>
-  );
-});
-
-const VoiceWaveform = memo(function VoiceWaveform(props: {
-  readonly audioLevels: SharedValue<ReadonlyArray<number>>;
-}) {
-  const [barCount, setBarCount] = useState(0);
-  const handleLayout = (event: LayoutChangeEvent) => {
-    setBarCount(
-      Math.max(
-        1,
-        Math.min(
-          VOICE_WAVEFORM_SAMPLE_COUNT,
-          Math.floor(event.nativeEvent.layout.width / WAVEFORM_BAR_SPACING),
-        ),
-      ),
-    );
-  };
-
-  return (
-    <View
-      accessibilityElementsHidden
-      importantForAccessibility="no-hide-descendants"
-      className="min-w-0 flex-1 flex-row items-center justify-between overflow-hidden"
-      style={{ height: WAVEFORM_BAR_HEIGHT }}
-      onLayout={handleLayout}
-    >
-      {Array.from({ length: barCount }, (_, index) => (
-        <WaveformBar
-          key={index}
-          audioLevels={props.audioLevels}
-          sampleIndex={VOICE_WAVEFORM_SAMPLE_COUNT - barCount + index}
         />
       ))}
     </View>
@@ -353,36 +204,24 @@ export function ComposerDictationStatus(props: {
   readonly phase: VoiceInputPhase;
   readonly presentation: VoiceComposerPresentation;
 }) {
-  const recording = props.phase === "recording";
-  const waveformStyle = useAnimatedStyle(() => ({
-    opacity: withTiming(recording ? 1 : 0, DICTATION_TIMING),
-  }));
-  const labelStyle = useAnimatedStyle(() => ({
-    opacity: withTiming(recording ? 0 : 1, DICTATION_TIMING),
-  }));
-
   if (!props.presentation.statusLabel || props.presentation.statusKind === "error") return null;
   return (
-    <View className="relative h-11 min-w-0 flex-1 justify-center">
-      <View
-        accessible
-        accessibilityLabel={props.presentation.statusLabel}
-        accessibilityLiveRegion={props.phase === "recording" ? "none" : "polite"}
-        className="h-11"
-      >
-        <Animated.View
-          className="absolute inset-0 min-w-0 flex-row items-center gap-2 px-1"
-          style={waveformStyle}
-        >
-          <VoiceWaveform audioLevels={props.audioLevels} />
+    <View
+      accessible
+      accessibilityLabel={props.presentation.statusLabel}
+      accessibilityLiveRegion={props.phase === "recording" ? "none" : "polite"}
+      className="h-11 min-w-0 shrink flex-row items-center gap-2 px-1"
+    >
+      {props.phase === "recording" ? (
+        <>
+          <CompactVoiceWaveform audioLevels={props.audioLevels} />
           <DictationElapsedTime className="text-foreground-muted" seconds={props.elapsedSeconds} />
-        </Animated.View>
-        <Animated.View className="absolute inset-0 justify-center px-2" style={labelStyle}>
-          <Text className="text-center text-sm text-foreground-muted" numberOfLines={1}>
-            {props.presentation.statusLabel}
-          </Text>
-        </Animated.View>
-      </View>
+        </>
+      ) : (
+        <Text className="shrink text-xs text-foreground-muted" numberOfLines={1}>
+          {props.presentation.statusLabel}
+        </Text>
+      )}
     </View>
   );
 }

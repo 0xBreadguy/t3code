@@ -8,7 +8,6 @@ import {
   ComposerDictationPrimaryAction,
   ComposerDictationStartAction,
   ComposerDictationStatus,
-  ComposerDictationToolbar,
 } from "../../voice-input/ComposerDictationControl";
 import type { useVoiceInputController } from "../../voice-input/useVoiceInputController";
 import { resolveVoiceComposerPresentation } from "../../voice-input/voiceInputPresentation";
@@ -61,26 +60,24 @@ export function ScheduledTaskPromptField(props: {
         onDismiss={voice.cancel}
       />
       {showsDictation ? (
-        <ComposerDictationToolbar showsDictation>
-          <View className="h-11 flex-row items-center">
-            <ComposerDictationCancelAction presentation={presentation} onCancel={voice.cancel} />
-            <ComposerDictationStatus
-              audioLevels={voice.audioLevels}
-              elapsedSeconds={voice.elapsedSeconds}
-              phase={voice.state.phase}
-              presentation={presentation}
-            />
-            <ComposerDictationPrimaryAction
-              state={voice.state}
-              presentation={presentation}
-              isAvailable={voice.isAvailable}
-              disabled={props.disabled}
-              onStart={voice.start}
-              onConfirm={voice.stop}
-              onCancel={voice.cancel}
-            />
-          </View>
-        </ComposerDictationToolbar>
+        <View className="h-11 flex-row items-center justify-end">
+          <ComposerDictationCancelAction presentation={presentation} onCancel={voice.cancel} />
+          <ComposerDictationStatus
+            audioLevels={voice.audioLevels}
+            elapsedSeconds={voice.elapsedSeconds}
+            phase={voice.state.phase}
+            presentation={presentation}
+          />
+          <ComposerDictationPrimaryAction
+            state={voice.state}
+            presentation={presentation}
+            isAvailable={voice.isAvailable}
+            disabled={props.disabled}
+            onStart={voice.start}
+            onConfirm={voice.stop}
+            onCancel={voice.cancel}
+          />
+        </View>
       ) : null}
     </View>
   );

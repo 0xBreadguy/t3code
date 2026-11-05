@@ -80,7 +80,7 @@ import { VideoPreviewModal, type VideoPreviewSource } from "../../components/Vid
 import { GlassSurface } from "../../components/ui/GlassSurface";
 import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
 import { fileRoutePathSegments } from "../files/filePath";
-import { ComposerActionButton, ComposerToolbarRow } from "../../components/ComposerToolbar";
+import { ComposerActionButton } from "../../components/ComposerToolbar";
 import { ComposerModelControl } from "../../components/ComposerModelControl";
 import {
   composerStripAttachments,
@@ -105,12 +105,10 @@ import type { ComposerEnvironmentCandidate } from "@t3tools/client-runtime/compo
 import { offersLinkedEnvironments } from "@t3tools/client-runtime/link-request";
 import {
   ComposerDictationCancelAction,
-  ComposerDictationDraftContent,
   ComposerDictationError,
   ComposerDictationPrimaryAction,
   ComposerDictationStartAction,
   ComposerDictationStatus,
-  ComposerDictationToolbar,
 } from "../voice-input/ComposerDictationControl";
 import { useVoiceInputController } from "../voice-input/useVoiceInputController";
 import { resolveVoiceComposerPresentation } from "../voice-input/voiceInputPresentation";
@@ -579,8 +577,6 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const [compactRowWidth, setCompactRowWidth] = useState(0);
   const compactAttachmentLimit = compactRowWidth >= 500 ? 3 : 1;
   const compactEditor = useCompactComposerEditor(bodyText, draftMessage);
-  const showsCompactDictation = isVoiceInputPresented;
-  const isToolbarVisible = isVoiceInputPresented;
   const hasEditingAttachments =
     (queuedEdit !== null && queuedEdit.existingAttachments.length > 0) ||
     stripAttachments.length > 0;
@@ -885,11 +881,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
               setCompactRowWidth(event.nativeEvent.layout.width);
             }}
           >
-            <ComposerDictationDraftContent
-              className="flex-row items-end"
-              compact
-              hidden={showsCompactDictation}
-            >
+            <View className="flex-row items-end">
               <ComposerAttachmentButton
                 size={usesLargeControls ? "large" : "regular"}
                 disabled={isSubmissionLocked}
@@ -903,7 +895,9 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 style={[
                   {
                     minWidth:
-                      compactEditor.isExpanded || stripAttachments.length > 0
+                      compactEditor.isExpanded ||
+                      stripAttachments.length > 0 ||
+                      isVoiceInputPresented
                         ? 0
                         : INLINE_EDITOR_MIN_WIDTH,
                   },
@@ -940,15 +934,43 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   compactEditor.isExpanded ? { flex: 1, justifyContent: "flex-end" } : undefined
                 }
               >
-                {modelControl}
-                <ComposerDictationStartAction
-                  size={usesLargeControls ? "large" : "regular"}
-                  state={voiceInput.state}
-                  isAvailable={voiceInput.isAvailable}
-                  disabled={isSubmissionLocked}
-                  onStart={voiceInput.start}
-                  onCancel={voiceInput.cancel}
-                />
+                {isVoiceInputPresented ? (
+                  <>
+                    <ComposerDictationCancelAction
+                      size={usesLargeControls ? "large" : "regular"}
+                      presentation={voicePresentation}
+                      onCancel={voiceInput.cancel}
+                    />
+                    <ComposerDictationStatus
+                      audioLevels={voiceInput.audioLevels}
+                      elapsedSeconds={voiceInput.elapsedSeconds}
+                      phase={voiceInput.state.phase}
+                      presentation={voicePresentation}
+                    />
+                    <ComposerDictationPrimaryAction
+                      size={usesLargeControls ? "large" : "regular"}
+                      state={voiceInput.state}
+                      presentation={voicePresentation}
+                      isAvailable={voiceInput.isAvailable}
+                      disabled={isSubmissionLocked}
+                      onStart={voiceInput.start}
+                      onConfirm={voiceInput.stop}
+                      onCancel={voiceInput.cancel}
+                    />
+                  </>
+                ) : (
+                  <>
+                    {modelControl}
+                    <ComposerDictationStartAction
+                      size={usesLargeControls ? "large" : "regular"}
+                      state={voiceInput.state}
+                      isAvailable={voiceInput.isAvailable}
+                      disabled={isSubmissionLocked}
+                      onStart={voiceInput.start}
+                      onCancel={voiceInput.cancel}
+                    />
+                  </>
+                )}
                 {showStopAction ? (
                   <ComposerActionButton
                     size={usesLargeControls ? "large" : "regular"}
@@ -958,7 +980,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                     disabled={!props.canOperateThread}
                     onPress={props.onStopThread}
                   />
-                ) : showResumeAction ? (
+                ) : showResumeAction && voicePresentation.showsSend ? (
                   <ComposerActionButton
                     size={usesLargeControls ? "large" : "regular"}
                     accessibilityLabel="Resume queue"
@@ -966,7 +988,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                     disabled={!props.canOperateThread || resumingQueue}
                     onPress={() => void handleResumeQueue()}
                   />
-                ) : (
+                ) : voicePresentation.showsSend ? (
                   <SendActionButton
                     size={usesLargeControls ? "large" : "regular"}
                     accessibilityLabel={sendBlockedReason ?? sendLabel}
@@ -974,15 +996,10 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                     disabled={!canSend}
                     onSend={handleSend}
                   />
-                )}
+                ) : null}
               </View>
-            </ComposerDictationDraftContent>
-            <Animated.View
-              style={[
-                compactEditor.editorStyle,
-                showsCompactDictation ? { display: "none" } : undefined,
-              ]}
-            >
+            </View>
+            <Animated.View style={compactEditor.editorStyle}>
               <ComposerEditor
                 hidden={props.hidden}
                 draftKey={composerDraftKey}
@@ -1112,75 +1129,6 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
               />
             </Animated.View>
           </View>
-          <Animated.View
-            accessibilityElementsHidden={!isToolbarVisible}
-            collapsable={false}
-            importantForAccessibility={isToolbarVisible ? "auto" : "no-hide-descendants"}
-            pointerEvents={isToolbarVisible ? "auto" : "none"}
-            style={{ position: "absolute", bottom: surfacePaddingVertical, left: 0, right: 0 }}
-          >
-            <ComposerDictationToolbar
-              showsDictation={isVoiceInputPresented}
-              visible={isToolbarVisible}
-            >
-              <ComposerToolbarRow
-                paddingBottom={0}
-                paddingHorizontal={0}
-                paddingTop={0}
-                style={{ gap: 0 }}
-              >
-                <ComposerDictationCancelAction
-                  size={usesLargeControls ? "large" : "regular"}
-                  presentation={voicePresentation}
-                  onCancel={voiceInput.cancel}
-                />
-                <ComposerDictationStatus
-                  audioLevels={voiceInput.audioLevels}
-                  elapsedSeconds={voiceInput.elapsedSeconds}
-                  phase={voiceInput.state.phase}
-                  presentation={voicePresentation}
-                />
-                <View className="shrink-0 flex-row items-center">
-                  <ComposerDictationPrimaryAction
-                    size={usesLargeControls ? "large" : "regular"}
-                    state={voiceInput.state}
-                    presentation={voicePresentation}
-                    isAvailable={voiceInput.isAvailable}
-                    disabled={isSubmissionLocked}
-                    onStart={voiceInput.start}
-                    onConfirm={voiceInput.stop}
-                    onCancel={voiceInput.cancel}
-                  />
-                  {showStopAction ? (
-                    <ComposerActionButton
-                      size={usesLargeControls ? "large" : "regular"}
-                      accessibilityLabel="Stop agent"
-                      icon="stop.fill"
-                      variant="danger"
-                      disabled={!props.canOperateThread}
-                      onPress={props.onStopThread}
-                    />
-                  ) : showResumeAction && voicePresentation.showsSend ? (
-                    <ComposerActionButton
-                      size={usesLargeControls ? "large" : "regular"}
-                      accessibilityLabel="Resume queue"
-                      icon="play"
-                      disabled={!props.canOperateThread || resumingQueue}
-                      onPress={() => void handleResumeQueue()}
-                    />
-                  ) : voicePresentation.showsSend ? (
-                    <SendActionButton
-                      size={usesLargeControls ? "large" : "regular"}
-                      accessibilityLabel={sendBlockedReason ?? sendLabel}
-                      presentation={sendPresentation}
-                      disabled={!canSend}
-                      onSend={handleSend}
-                    />
-                  ) : null}
-                </View>
-              </ComposerToolbarRow>
-            </ComposerDictationToolbar>
-          </Animated.View>
         </ComposerSurface>
 
         {props.connectionState === "connected" && !props.canOperateThread ? (
