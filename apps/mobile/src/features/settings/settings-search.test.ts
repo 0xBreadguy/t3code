@@ -16,6 +16,7 @@ const SECTIONS = [
     rows: [
       { id: "SettingsAppearance", label: "Appearance" },
       { id: "SettingsKeyboard", label: "Keyboard" },
+      { id: "SettingsMicrophone", label: "Microphone" },
     ],
   },
   {
@@ -47,6 +48,7 @@ describe("filterSettingsSections", () => {
     { query: "appear", expected: [["Interface", ["Appearance"]]] },
     { query: "KEYBOARD", expected: [["Interface", ["Keyboard"]]] },
     { query: "dark mode", expected: [["Interface", ["Appearance"]]] },
+    { query: "parakeet", expected: [["Interface", ["Microphone"]]] },
     { query: "agent credits", expected: [["Server settings", ["Source control"]]] },
     {
       query: "server settings",
