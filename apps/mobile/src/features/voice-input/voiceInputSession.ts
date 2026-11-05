@@ -9,6 +9,11 @@ import {
 } from "@t3tools/client-runtime/voice-input";
 
 import { normalizeVoiceInputDecibels, VOICE_WAVEFORM_SAMPLE_COUNT } from "./voiceInputMetering";
+import {
+  DEFAULT_VOICE_TRANSCRIPTION_ENGINE,
+  type VoiceTranscriptionEngine,
+} from "../../lib/voiceTranscriptionEngine";
+import type { VoiceDictationMeasurement } from "./voiceInputDiagnostics";
 
 const VOICE_METERING_INTERVAL_MS = 80;
 const IDLE_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: null };
@@ -45,6 +50,9 @@ export type VoiceInputSessionDependencies = Omit<
   readonly publishAudioLevels: (levels: ReadonlyArray<number>) => void;
   /** Holds the screen awake while recording; returns the release. */
   readonly keepAwake: () => () => void;
+  readonly now?: () => number;
+  readonly getMeasurementEngine?: () => VoiceTranscriptionEngine;
+  readonly onMeasurement?: (measurement: VoiceDictationMeasurement) => void;
 };
 
 export function createVoiceInputTarget(
@@ -96,6 +104,15 @@ export class VoiceInputSession {
   private audioLevels = SILENT_LEVELS;
   private releaseKeepAwake: (() => void) | null = null;
   private meteringInterval: ReturnType<typeof setInterval> | null = null;
+  private measurementSequence = 0;
+  private measurement: {
+    readonly id: number;
+    readonly engine: VoiceTranscriptionEngine;
+    readonly preparationStartedAt: number;
+    preparationMs?: number;
+    stopStartedAt?: number;
+    committedAt?: number;
+  } | null = null;
 
   constructor(dependencies: VoiceInputSessionDependencies) {
     this.dependencies = dependencies;
@@ -103,7 +120,11 @@ export class VoiceInputSession {
       ...dependencies,
       onStateChange: (state) => this.handleStateChange(state),
       readDraft: () => this.target?.readDraft() ?? null,
-      commitDraft: (text, selection) => this.target?.commitDraft(text, selection),
+      commitDraft: (text, selection) => {
+        if (!this.target) return;
+        this.target.commitDraft(text, selection);
+        if (this.measurement) this.measurement.committedAt = this.now();
+      },
     });
   }
 
@@ -146,6 +167,7 @@ export class VoiceInputSession {
   }
 
   dispose(): void {
+    this.measurement = null;
     this.controller.dispose();
     this.stopRecordingActivity();
     this.unsubscribe?.();
@@ -154,6 +176,7 @@ export class VoiceInputSession {
   }
 
   private handleStateChange(state: VoiceInputState): void {
+    this.updateMeasurement(state);
     if (!voiceInputBlocksSubmission(state)) {
       this.unsubscribe?.();
       this.unsubscribe = null;
@@ -177,6 +200,45 @@ export class VoiceInputSession {
     if (state.phase === "recording" && previousPhase !== "recording") {
       this.startRecordingActivity();
     }
+  }
+
+  private now(): number {
+    return this.dependencies.now?.() ?? performance.now();
+  }
+
+  private updateMeasurement(state: VoiceInputState): void {
+    if (!this.dependencies.onMeasurement) return;
+    const previousPhase = this.snapshot.state.phase;
+    if (state.phase === "preparing" && previousPhase !== "preparing") {
+      this.measurement = {
+        id: ++this.measurementSequence,
+        engine: this.dependencies.getMeasurementEngine?.() ?? DEFAULT_VOICE_TRANSCRIPTION_ENGINE,
+        preparationStartedAt: this.now(),
+      };
+    }
+    const measurement = this.measurement;
+    if (!measurement) return;
+    if (state.phase === "recording" && previousPhase !== "recording") {
+      measurement.preparationMs = this.now() - measurement.preparationStartedAt;
+    }
+    if (state.phase === "transcribing" && previousPhase !== "transcribing") {
+      measurement.stopStartedAt = this.now();
+    }
+    if (voiceInputBlocksSubmission(state)) return;
+    this.measurement = null;
+    const committedAt = measurement.committedAt;
+    const complete = committedAt !== undefined;
+    this.dependencies.onMeasurement({
+      id: measurement.id,
+      engine: measurement.engine,
+      status: complete ? "complete" : state.phase === "error" ? "error" : "cancelled",
+      ...(measurement.preparationMs === undefined
+        ? {}
+        : { preparationMs: measurement.preparationMs }),
+      ...(complete && measurement.stopStartedAt !== undefined
+        ? { stopToCommitMs: committedAt - measurement.stopStartedAt }
+        : {}),
+    });
   }
 
   private startRecordingActivity(): void {

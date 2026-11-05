@@ -1,0 +1,14 @@
+Parakeet 110M English speech recognition
+
+Model: NVIDIA NeMo and Suno.ai, parakeet-tdt_ctc-110m.
+https://huggingface.co/nvidia/parakeet-tdt_ctc-110m
+License: Creative Commons Attribution 4.0 International.
+The bundled files are the existing k2-fsa ONNX INT8 TDT conversion, used
+unchanged. Source: https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models
+
+Runtime: sherpa-onnx 2.0.1, Apache License 2.0.
+https://github.com/k2-fsa/sherpa-onnx/tree/af2d8d81dbfa61c4cea4c568da78f3982edca005
+Bundled ONNX Runtime 1.28.2 is MIT-licensed, with third-party notices included.
+
+Model file hashes are recorded in the adjacent MANIFEST.json.
+Pinned archive/runtime sources and license hashes are recorded in PROVENANCE.json.

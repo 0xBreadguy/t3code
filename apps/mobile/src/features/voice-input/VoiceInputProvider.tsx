@@ -4,7 +4,8 @@ import { File } from "expo-file-system";
 import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 import { useSyncExternalStore } from "react";
 import { Platform } from "react-native";
-import { Atom, AsyncResult } from "effect/reactivity";
+import * as Effect from "effect/Effect";
+import { Atom, AtomRegistry, AsyncResult } from "effect/reactivity";
 import { makeMutable } from "react-native-reanimated";
 
 import {
@@ -13,6 +14,7 @@ import {
   rememberMicrophones,
 } from "../../lib/microphonePriority";
 import { getLocalVoiceTranscriber } from "../../native/voiceTranscription";
+import { DEFAULT_VOICE_TRANSCRIPTION_ENGINE } from "../../lib/voiceTranscriptionEngine";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { getNativeShowcaseScene } from "../showcase/nativeShowcaseScene";
 import { voiceInputBlocksSubmission } from "@t3tools/client-runtime/voice-input";
@@ -21,6 +23,11 @@ import { VOICE_WAVEFORM_SAMPLE_COUNT } from "./voiceInputMetering";
 import { VoiceInputSession } from "./voiceInputSession";
 import { createVoiceRecordingPermission } from "./voiceRecordingPermission";
 import { makePermissionStatusAtom } from "../../lib/permissionStatusAtom";
+import {
+  VOICE_DICTATION_MEASUREMENT_LIMIT,
+  voiceDictationMeasurementsAtom,
+  type VoiceDictationMeasurement,
+} from "./voiceInputDiagnostics";
 import {
   acquireAudioSession,
   activateAudioSession,
@@ -46,12 +53,6 @@ function keepScreenAwake(tag: string): () => void {
   return () => void activation.then(() => deactivateKeepAwake(tag)).catch(() => {});
 }
 
-const localVoiceTranscriberAtom = makePermissionStatusAtom({
-  label: "mobile:voice-input:transcriber",
-  initial: null,
-  read: () => getLocalVoiceTranscriber().catch(() => null),
-}).pipe(Atom.keepAlive);
-
 /**
  * The app has one microphone and one dictation at a time, so the session
  * lives for the registry's lifetime rather than any screen's.
@@ -61,6 +62,22 @@ const voiceInputAtom = Atom.make((get) => {
   // Mounted so the recorder can read and remember microphones synchronously.
   get.mount(mobilePreferencesAtom);
   get.mount(updateMobilePreferencesAtom);
+  const getEngine = () => {
+    const preferences = registry.get(mobilePreferencesAtom);
+    return AsyncResult.isSuccess(preferences)
+      ? (preferences.value.androidVoiceTranscriptionEngine ?? DEFAULT_VOICE_TRANSCRIPTION_ENGINE)
+      : DEFAULT_VOICE_TRANSCRIPTION_ENGINE;
+  };
+  const localVoiceTranscriberAtom = makePermissionStatusAtom({
+    label: "mobile:voice-input:transcriber",
+    initial: null,
+    read: () =>
+      Effect.runPromise(
+        AtomRegistry.getResult(registry, mobilePreferencesAtom, { suspendOnWaiting: true }),
+      )
+        .then(() => getLocalVoiceTranscriber(getEngine))
+        .catch(() => null),
+  }).pipe(Atom.keepAlive);
   get.mount(localVoiceTranscriberAtom);
   const audioLevels = makeMutable<ReadonlyArray<number>>(
     Array<number>(VOICE_WAVEFORM_SAMPLE_COUNT).fill(0),
@@ -123,17 +140,29 @@ const voiceInputAtom = Atom.make((get) => {
     },
     publishAudioLevels: (levels) => audioLevels.set(levels),
     keepAwake: () => keepScreenAwake(`voice-input:${++keepAwakeSequence}`),
+    ...(Platform.OS === "android"
+      ? {
+          getMeasurementEngine: getEngine,
+          onMeasurement: (measurement: VoiceDictationMeasurement) => {
+            const previous = registry.get(voiceDictationMeasurementsAtom);
+            registry.set(voiceDictationMeasurementsAtom, [
+              ...previous.slice(-(VOICE_DICTATION_MEASUREMENT_LIMIT - 1)),
+              measurement,
+            ]);
+          },
+        }
+      : {}),
   });
   get.addFinalizer(() => {
     permission.dispose();
     session.dispose();
     recorder.release();
   });
-  return { session, audioLevels };
+  return { session, audioLevels, localVoiceTranscriberAtom };
 }).pipe(Atom.keepAlive, Atom.withLabel("mobile:voice-input"));
 
 export function useGlobalVoiceInput() {
-  const { session, audioLevels } = useAtomValue(voiceInputAtom);
+  const { session, audioLevels, localVoiceTranscriberAtom } = useAtomValue(voiceInputAtom);
   const transcriber = useAtomValue(localVoiceTranscriberAtom);
   const snapshot = useSyncExternalStore(session.subscribe, session.getSnapshot);
   return {

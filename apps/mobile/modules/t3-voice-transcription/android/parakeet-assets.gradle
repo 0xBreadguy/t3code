@@ -1,0 +1,138 @@
+import groovy.json.JsonOutput
+import groovy.json.JsonSlurper
+import java.security.MessageDigest
+
+final def artifactManifestFile = file('parakeet-artifacts.json')
+final def speechArtifacts = new JsonSlurper().parse(artifactManifestFile)
+final def runtimeArtifact = speechArtifacts.runtime
+final def modelArtifact = speechArtifacts.model.archive
+final def artifactGroup = 'com.k2fsa.sherpa-onnx'
+final def runtimeCoordinate = "${runtimeArtifact.group}:${runtimeArtifact.artifact}:${runtimeArtifact.version}@${runtimeArtifact.extension}"
+final def modelCoordinate = "${modelArtifact.group}:${modelArtifact.artifact}:${modelArtifact.version}@${modelArtifact.extension}"
+final def mirror = providers.gradleProperty('t3SpeechArtifactMirror').orNull
+final def repositoryUri = mirror == null ? uri(speechArtifacts.repositoryUrl) : file(mirror).toURI()
+
+// The app resolves the library's transitive AAR with its own repository collection.
+rootProject.allprojects { target ->
+  target.repositories.exclusiveContent {
+    forRepository {
+      target.repositories.ivy {
+        name = 'T3PinnedSpeechArtifacts'
+        url = repositoryUri
+        patternLayout { artifact('[revision]/[artifact].[ext]') }
+        metadataSources { artifact() }
+      }
+    }
+    filter { includeGroup(artifactGroup) }
+  }
+}
+
+final def runtimeFiles = configurations.create('parakeetRuntimeArtifact') {
+  canBeConsumed = false
+  canBeResolved = true
+  transitive = false
+}
+final def modelFiles = configurations.create('parakeetModelArchive') {
+  canBeConsumed = false
+  canBeResolved = true
+  transitive = false
+}
+
+dependencies {
+  implementation(runtimeCoordinate)
+  parakeetRuntimeArtifact(runtimeCoordinate)
+  parakeetModelArchive(modelCoordinate)
+}
+
+final def generatedAssetsDirectory = layout.buildDirectory.dir('generated/parakeetAssets')
+final def licensesDirectory = file('parakeet-licenses')
+final def requiredModelFiles = ['encoder.int8.onnx', 'decoder.int8.onnx', 'joiner.int8.onnx', 'tokens.txt'] as Set
+
+final def sha256 = { File input ->
+  def digest = MessageDigest.getInstance('SHA-256')
+  input.withInputStream { stream ->
+    byte[] buffer = new byte[64 * 1024]
+    int count
+    while ((count = stream.read(buffer)) != -1) digest.update(buffer, 0, count)
+  }
+  digest.digest().encodeHex().toString()
+}
+
+final def verifyArtifact = { File input, metadata ->
+  if (!input.isFile() || (metadata.bytes != null && input.length() != (metadata.bytes as long)) ||
+      sha256(input) != metadata.sha256) {
+    throw new GradleException("Pinned speech artifact verification failed: ${input.name}")
+  }
+}
+
+final def prepareAssets = tasks.register('prepareParakeetAssets') {
+  group = 'build'
+  description = 'Verify pinned local speech artifacts and stage unchanged Parakeet model assets.'
+  inputs.file(artifactManifestFile)
+  inputs.files(runtimeFiles)
+  inputs.files(modelFiles)
+  inputs.dir(licensesDirectory)
+  outputs.dir(generatedAssetsDirectory)
+
+  doLast {
+    if (speechArtifacts.schemaVersion != 1 || speechArtifacts.assetDirectory != 'parakeet' ||
+        speechArtifacts.model.files.collect { it.name }.toSet() != requiredModelFiles ||
+        speechArtifacts.model.files.size() != requiredModelFiles.size() ||
+        !(speechArtifacts.model.archiveRoot ==~ /[A-Za-z0-9_.-]+/)) {
+      throw new GradleException('Invalid pinned Parakeet artifact manifest')
+    }
+    verifyArtifact(runtimeFiles.singleFile, runtimeArtifact)
+    verifyArtifact(modelFiles.singleFile, modelArtifact)
+    def work = new File(temporaryDir, 'assets')
+    delete(work)
+    def modelDirectory = new File(work, 'parakeet')
+    if (!modelDirectory.mkdirs()) throw new GradleException('Could not stage Parakeet model assets')
+    def expected = speechArtifacts.model.files.collectEntries { entry ->
+      [("${speechArtifacts.model.archiveRoot}/${entry.name}".toString()): entry]
+    }
+    def extracted = [] as Set
+    tarTree(resources.bzip2(modelFiles.singleFile)).visit { entry ->
+      def archivePath = entry.relativePath.pathString.replaceFirst(/^\.\//, '')
+      def metadata = expected[archivePath]
+      if (metadata != null) {
+        if (entry.directory || !extracted.add(metadata.name)) {
+          throw new GradleException("Duplicate or invalid Parakeet archive member: ${metadata.name}")
+        }
+        def destination = new File(modelDirectory, metadata.name)
+        entry.open().withCloseable { stream ->
+          destination.withOutputStream { output -> output << stream }
+        }
+        verifyArtifact(destination, metadata)
+      }
+    }
+    if (extracted != requiredModelFiles) throw new GradleException('Parakeet archive is missing pinned model files')
+    def licenseOutput = new File(modelDirectory, 'licenses')
+    if (!licenseOutput.mkdirs()) throw new GradleException('Could not stage speech licenses')
+    speechArtifacts.licenses.each { metadata ->
+      if (!(metadata.name ==~ /[A-Za-z0-9_.-]+/)) throw new GradleException('Invalid speech license filename')
+      def source = new File(licensesDirectory, metadata.name)
+      verifyArtifact(source, metadata)
+      source.withInputStream { stream ->
+        new File(licenseOutput, metadata.name).withOutputStream { output -> output << stream }
+      }
+    }
+    def runtimeManifest = [
+      model: speechArtifacts.model.archiveRoot,
+      runtime: 'sherpa-onnx 2.0.1',
+      threads: 2,
+      provider: 'cpu',
+      files: speechArtifacts.model.files,
+    ]
+    new File(modelDirectory, 'MANIFEST.json').setText(JsonOutput.prettyPrint(JsonOutput.toJson(runtimeManifest)) + '\n', 'UTF-8')
+    new File(modelDirectory, 'PROVENANCE.json').setText(JsonOutput.prettyPrint(JsonOutput.toJson(speechArtifacts)) + '\n', 'UTF-8')
+    def outputDirectory = generatedAssetsDirectory.get().asFile
+    delete(outputDirectory)
+    if (!work.renameTo(outputDirectory)) {
+      if (!outputDirectory.mkdirs()) throw new GradleException('Could not create generated speech asset directory')
+      copy { from(work); into(outputDirectory) }
+    }
+  }
+}
+
+android.sourceSets.main.assets.srcDir(files(generatedAssetsDirectory).builtBy(prepareAssets))
+tasks.named('preBuild').configure { dependsOn(prepareAssets) }

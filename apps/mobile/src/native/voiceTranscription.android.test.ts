@@ -2,7 +2,9 @@ import { expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({
   checkAvailability: vi.fn<() => Promise<boolean>>(),
+  isParakeetAvailable: vi.fn<() => boolean>(),
   prepare: vi.fn<(id: number) => Promise<{ locale: string; mode: number }>>(),
+  prepareParakeet: vi.fn<(id: number) => Promise<{ locale: string; mode: number }>>(),
   transcribe: vi.fn<(id: number, uri: string, locale: string, mode: number) => Promise<string>>(),
   cancel: vi.fn<(id: number) => Promise<void>>(),
 }));
@@ -12,6 +14,7 @@ vi.mock("expo", () => ({
 }));
 
 import { getLocalVoiceTranscriber } from "./voiceTranscription.android";
+import type { VoiceTranscriptionEngine } from "../lib/voiceTranscriptionEngine";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -84,3 +87,33 @@ it.each(["preparation", "transcription"] as const)(
     expect(await result).toMatchObject({ code: "cancelled" });
   },
 );
+
+it("applies the selected engine to the next recording without changing a prepared recording", async () => {
+  vi.resetAllMocks();
+  mocks.isParakeetAvailable.mockReturnValue(true);
+  mocks.prepare.mockResolvedValue({ locale: "en-US", mode: 1 });
+  mocks.prepareParakeet.mockResolvedValue({ locale: "en-US", mode: -1 });
+  mocks.transcribe.mockImplementation(async (_id, _uri, _locale, mode) =>
+    mode === -1 ? "Local speech" : "Google speech",
+  );
+  let selected: VoiceTranscriptionEngine = "google";
+  const transcriber = (await getLocalVoiceTranscriber(() => selected))!;
+  const options = { signal: new AbortController().signal };
+  const google = await transcriber.prepare(options);
+  selected = "parakeet";
+  expect(await google.transcribe("file:///voice.m4a", options)).toBe("Google speech");
+  const parakeet = await transcriber.prepare(options);
+  expect(await parakeet.transcribe("file:///voice.m4a", options)).toBe("Local speech");
+});
+
+it("does not silently substitute Google when Parakeet is explicitly selected but unsupported", async () => {
+  vi.resetAllMocks();
+  mocks.isParakeetAvailable.mockReturnValue(false);
+  mocks.checkAvailability.mockResolvedValue(true);
+  const transcriber = (await getLocalVoiceTranscriber(() => "parakeet"))!;
+  await expect(transcriber.prepare({ signal: new AbortController().signal })).rejects.toMatchObject(
+    {
+      code: "unsupported-locale",
+    },
+  );
+});

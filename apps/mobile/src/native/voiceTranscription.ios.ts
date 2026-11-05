@@ -1,5 +1,7 @@
 import AppleTranscription from "@react-native-ai/apple/src/NativeAppleTranscription";
 import { File } from "expo-file-system";
+import type { VoiceTranscriptionEngine } from "../lib/voiceTranscriptionEngine";
+import type { VoiceTranscriptionDiagnostics } from "./voiceTranscriptionDiagnostics";
 
 import {
   VoiceTranscriptionError,
@@ -33,10 +35,16 @@ function getNativeErrorCode(error: unknown): string | undefined {
   return typeof error.code === "string" ? error.code : undefined;
 }
 
-export async function getLocalVoiceTranscriber(): Promise<VoiceTranscriber | null> {
+export async function getLocalVoiceTranscriber(
+  _getEngine?: () => VoiceTranscriptionEngine,
+): Promise<VoiceTranscriber | null> {
   const locale = getDeviceLocale();
   if (!AppleTranscription.isAvailable(locale)) return null;
   return { prepare: (options) => prepareVoiceTranscription(locale, options) };
+}
+
+export async function getVoiceTranscriptionDiagnostics(): Promise<VoiceTranscriptionDiagnostics | null> {
+  return null;
 }
 
 async function prepareVoiceTranscription(

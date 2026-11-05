@@ -109,11 +109,16 @@ describe("mobile connection storage", () => {
   it("persists tab order locally and retains it when another preference changes", async () => {
     const navigationTabOrder = ["usage", "threads", "pullRequests"];
     const hiddenNavigationTabs = ["issues", "home"];
-    await savePreferencesPatch({ navigationTabOrder, hiddenNavigationTabs });
+    await savePreferencesPatch({
+      navigationTabOrder,
+      hiddenNavigationTabs,
+      androidVoiceTranscriptionEngine: "parakeet",
+    });
     await savePreferencesPatch({ baseFontSize: 19 });
     await expect(loadPreferences()).resolves.toEqual({
       navigationTabOrder,
       hiddenNavigationTabs,
+      androidVoiceTranscriptionEngine: "parakeet",
       baseFontSize: 19,
     });
   });
@@ -123,6 +128,7 @@ describe("mobile connection storage", () => {
       JSON.stringify({
         navigationTabOrder: ["usage", null, 4, "threads"],
         hiddenNavigationTabs: ["home", null],
+        androidVoiceTranscriptionEngine: "cloud",
         baseFontSize: 18,
       }),
       1,

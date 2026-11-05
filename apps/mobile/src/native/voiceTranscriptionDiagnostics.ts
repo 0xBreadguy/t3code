@@ -1,0 +1,8 @@
+export interface VoiceTranscriptionDiagnostics {
+  readonly engine: string;
+  readonly status?: string;
+  readonly preparationMs?: number;
+  readonly decodeMs?: number;
+  readonly inferenceMs?: number;
+  readonly totalMs?: number;
+}

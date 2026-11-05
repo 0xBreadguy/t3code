@@ -174,6 +174,8 @@ export default defineConfig({
       "apps/mobile/android/**",
       "apps/mobile/ios/**",
       "apps/mobile/uniwind-types.d.ts",
+      // Pinned upstream license bytes must retain their checksums.
+      "apps/mobile/modules/t3-voice-transcription/android/parakeet-licenses/**",
       // Vendored and generated C.
       "apps/mobile/modules/t3-highlights/Vendor/**",
       "apps/mobile/modules/t3-highlights/cpp/generated/**",

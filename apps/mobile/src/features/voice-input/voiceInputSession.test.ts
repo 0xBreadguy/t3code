@@ -26,6 +26,7 @@ import {
   type VoiceInputTarget,
   type VoiceRecordingSample,
 } from "./voiceInputSession";
+import type { VoiceDictationMeasurement } from "./voiceInputDiagnostics";
 
 function createTarget(
   ownerKey: string,
@@ -40,7 +41,12 @@ function createSession(
   overrides?: Partial<
     Pick<
       VoiceInputSessionDependencies,
-      "configureRecording" | "releaseRecording" | "sampleRecording"
+      | "configureRecording"
+      | "releaseRecording"
+      | "sampleRecording"
+      | "now"
+      | "getMeasurementEngine"
+      | "onMeasurement"
     >
   >,
 ) {
@@ -74,6 +80,56 @@ function createSession(
 
 describe("global voice input", () => {
   beforeEach(() => resetVoiceInputGlobalsForTests());
+
+  it.each(["complete", "error", "cancelled"] as const)(
+    "records local timings for %s without counting uncommitted text as success",
+    async (outcome) => {
+      let clock = 100;
+      const measurements: VoiceDictationMeasurement[] = [];
+      const entered = Promise.withResolvers<void>();
+      const pending = Promise.withResolvers<string>();
+      const { session, prepare, recorder } = createSession({
+        now: () => clock,
+        getMeasurementEngine: () => "parakeet",
+        onMeasurement: (measurement) => measurements.push(measurement),
+      });
+      prepare.mockImplementationOnce(async () => {
+        clock = 150;
+        return {
+          locale: "en-US",
+          transcribe: () => {
+            entered.resolve();
+            return pending.promise;
+          },
+        };
+      });
+      recorder.stop.mockImplementationOnce(async () => {
+        clock = 1_050;
+      });
+      const commit = vi.fn();
+      await session.start(createTarget("first", () => "", commit, { start: 0, end: 0 }));
+      clock = 1_000;
+      const stopping = session.controller.stop();
+      await entered.promise;
+      expect(measurements).toEqual([]);
+      clock = 1_200;
+      if (outcome === "cancelled") session.cancel("first");
+      if (outcome === "error") pending.reject(new Error("Recognition failed"));
+      else pending.resolve("spoken text");
+      await stopping;
+
+      expect(measurements).toEqual([
+        {
+          id: 1,
+          engine: "parakeet",
+          status: outcome,
+          preparationMs: 50,
+          ...(outcome === "complete" ? { stopToCommitMs: 200 } : {}),
+        },
+      ]);
+      expect(commit).toHaveBeenCalledTimes(outcome === "complete" ? 1 : 0);
+    },
+  );
 
   it.each(["retry", "takeover"])(
     "handles failed deactivation with %s without notifying a released owner",

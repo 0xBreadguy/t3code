@@ -1,0 +1,92 @@
+{
+  "schemaVersion": 1,
+  "repositoryUrl": "https://github.com/k2-fsa/sherpa-onnx/releases/download",
+  "assetDirectory": "parakeet",
+  "runtime": {
+    "group": "com.k2fsa.sherpa-onnx",
+    "artifact": "sherpa-onnx-2.0.1",
+    "version": "v2.0.1",
+    "extension": "aar",
+    "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.1/sherpa-onnx-2.0.1.aar",
+    "sha256": "a8d09d1d32f3eb8520482c6d3d43fae674681c5b050385967c70a3c2c9bf0ee7",
+    "bytes": 49441341,
+    "sourceRevision": "af2d8d81dbfa61c4cea4c568da78f3982edca005",
+    "license": "Apache-2.0",
+    "onnxruntimeVersion": "1.28.2"
+  },
+  "model": {
+    "id": "parakeet-110m-int8-en",
+    "type": "nemo_transducer",
+    "locale": "en-US",
+    "sampleRate": 16000,
+    "featureDim": 80,
+    "decodingMethod": "greedy_search",
+    "numThreads": 2,
+    "provider": "cpu",
+    "license": "CC-BY-4.0",
+    "attribution": "NVIDIA NeMo and Suno.ai; k2-fsa ONNX INT8 TDT conversion; weights bundled unchanged",
+    "archive": {
+      "group": "com.k2fsa.sherpa-onnx",
+      "artifact": "sherpa-onnx-nemo-parakeet_tdt_transducer_110m-en-36000-int8",
+      "version": "asr-models",
+      "extension": "tar.bz2",
+      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet_tdt_transducer_110m-en-36000-int8.tar.bz2",
+      "sha256": "f628312e9fdf8686374cb01a69425c41732529d540860311f16f37cbc32cfe9b"
+    },
+    "archiveRoot": "sherpa-onnx-nemo-parakeet_tdt_transducer_110m-en-36000-int8",
+    "files": [
+      {
+        "name": "decoder.int8.onnx",
+        "sha256": "f7c331c5504c2e593c76ed22b728e3f554af6c4a383dde862e719ced08b1da19",
+        "bytes": 3955863
+      },
+      {
+        "name": "encoder.int8.onnx",
+        "sha256": "0f35509ddeb9b39002fb077d979a9fe74f06eb0bc4dd5c34f512f82e5111d657",
+        "bytes": 131113202
+      },
+      {
+        "name": "joiner.int8.onnx",
+        "sha256": "bf7dff69e9f2cdbe9943d70da358f38b361c115ba0105bae7e908e0d6ec782f6",
+        "bytes": 1411403
+      },
+      {
+        "name": "tokens.txt",
+        "sha256": "450e56bd2f036fe5b6aa821865838cc5aa9d8b0106134ce9a9ba0664abe6cd10",
+        "bytes": 9953
+      }
+    ]
+  },
+  "licenses": [
+    {
+      "name": "sherpa-onnx-LICENSE",
+      "url": "https://raw.githubusercontent.com/k2-fsa/sherpa-onnx/af2d8d81dbfa61c4cea4c568da78f3982edca005/LICENSE",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    {
+      "name": "onnxruntime-LICENSE",
+      "url": "https://raw.githubusercontent.com/microsoft/onnxruntime/v1.28.2/LICENSE",
+      "sha256": "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c"
+    },
+    {
+      "name": "onnxruntime-ThirdPartyNotices.txt",
+      "url": "https://raw.githubusercontent.com/microsoft/onnxruntime/v1.28.2/ThirdPartyNotices.txt",
+      "sha256": "0e07b95f3a8d6230037707c5c4a2b554d12c4cb67369669ac255635528ffcee2"
+    },
+    {
+      "name": "nvidia-parakeet-model-card.md",
+      "url": "https://huggingface.co/nvidia/parakeet-tdt_ctc-110m/raw/main/README.md",
+      "sha256": "b3b64ddb87cc162ebba6f1cbdc5770d036615c845703622a12a2eb1c6792114a"
+    },
+    {
+      "name": "CC-BY-4.0.txt",
+      "url": "https://raw.githubusercontent.com/spdx/license-list-data/main/text/CC-BY-4.0.txt",
+      "sha256": "d557539df68e771cc1eedcc91d13f70fca930e508d11eedcafa4b15db49e3744"
+    },
+    {
+      "name": "ATTRIBUTION.txt",
+      "sha256": "f4ccdffd568f7a3592cc1e2735f71315c14ae78c775b331d9df50f306d4dbb5f",
+      "description": "Model and runtime attribution; unchanged upstream weights"
+    }
+  ]
+}

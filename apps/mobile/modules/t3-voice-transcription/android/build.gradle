@@ -11,8 +11,11 @@ android {
   defaultConfig {
     minSdkVersion rootProject.ext.minSdkVersion
     targetSdkVersion rootProject.ext.targetSdkVersion
+    consumerProguardFiles 'consumer-rules.pro'
   }
 }
+
+apply from: 'parakeet-assets.gradle'
 
 dependencies {
   implementation project(':expo-modules-core')

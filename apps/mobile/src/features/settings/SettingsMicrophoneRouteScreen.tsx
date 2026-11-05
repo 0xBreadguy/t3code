@@ -3,7 +3,7 @@ import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { getRecordingPermissionsAsync, requestRecordingPermissionsAsync } from "expo-audio";
 import { useState } from "react";
-import { Linking, useWindowDimensions, View } from "react-native";
+import { Linking, Platform, useWindowDimensions, View } from "react-native";
 import Reanimated, { ReduceMotion, useAnimatedStyle, withTiming } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -11,6 +11,8 @@ import { type AppSymbolName } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { cn } from "../../lib/cn";
 import { makePermissionStatusAtom } from "../../lib/permissionStatusAtom";
+import { DEFAULT_VOICE_TRANSCRIPTION_ENGINE } from "../../lib/voiceTranscriptionEngine";
+import { getVoiceTranscriptionDiagnostics } from "../../native/voiceTranscription";
 import {
   isMicrophoneDevice,
   type MicrophoneEntry,
@@ -22,6 +24,8 @@ import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/
 import { ListRowLayout } from "../../components/ui/ListRowLayout";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
+import { ListChoiceRow as SettingsChoiceRow } from "../../components/ui/ListChoiceRow";
+import { voiceDictationMeasurementsAtom } from "../voice-input/voiceInputDiagnostics";
 import { SettingsDragHandle } from "./components/SettingsDragHandle";
 import { SettingsSection } from "./components/SettingsSection";
 
@@ -92,6 +96,12 @@ export function SettingsMicrophoneRouteScreen() {
   const insets = useSafeAreaInsets();
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const measurements = useAtomValue(voiceDictationMeasurementsAtom);
+  const setMeasurements = useAtomSet(voiceDictationMeasurementsAtom);
+  const [nativeDiagnostics, setNativeDiagnostics] = useState<
+    Awaited<ReturnType<typeof getVoiceTranscriptionDiagnostics>> | undefined
+  >();
+  const [readingDiagnostics, setReadingDiagnostics] = useState(false);
   const ready = AsyncResult.isSuccess(preferencesResult) && !preferencesResult.waiting;
   const entries = microphoneOrder(
     AsyncResult.isSuccess(preferencesResult) ? preferencesResult.value.microphones : undefined,
@@ -103,6 +113,20 @@ export function SettingsMicrophoneRouteScreen() {
   const [rowHeight, setRowHeight] = useState(0);
   // Each drop remounts the rows so the new order and the cleared offsets land in one frame.
   const [drops, setDrops] = useState(0);
+  const selectedEngine = AsyncResult.isSuccess(preferencesResult)
+    ? (preferencesResult.value.androidVoiceTranscriptionEngine ??
+      DEFAULT_VOICE_TRANSCRIPTION_ENGINE)
+    : null;
+  const refreshDiagnostics = async () => {
+    setReadingDiagnostics(true);
+    try {
+      setNativeDiagnostics(await getVoiceTranscriptionDiagnostics());
+    } catch {
+      setNativeDiagnostics(null);
+    } finally {
+      setReadingDiagnostics(false);
+    }
+  };
 
   // Transforms apply to the stored order, so a device recorded meanwhile is kept.
   const move = (key: string, steps: number) =>
@@ -144,6 +168,103 @@ export function SettingsMicrophoneRouteScreen() {
         contentContainerClassName="gap-3 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
+        {Platform.OS === "android" ? (
+          <>
+            <SettingsSection title="Dictation engine">
+              <SettingsChoiceRow
+                label="Google on-device"
+                description="Use the available Google speech model."
+                selected={selectedEngine === "google"}
+                disabled={!ready}
+                onPress={() => savePreferences({ androidVoiceTranscriptionEngine: "google" })}
+              />
+              <SettingsChoiceRow
+                label="Parakeet · English"
+                description="Use the local Parakeet speech model."
+                selected={selectedEngine === "parakeet"}
+                separated
+                disabled={!ready}
+                onPress={() => savePreferences({ androidVoiceTranscriptionEngine: "parakeet" })}
+              />
+            </SettingsSection>
+            <Text className="px-2 text-sm text-foreground-muted">
+              Parakeet runs English dictation on this device. This test build includes its 136 MB
+              model; the first recording prepares it, and later recordings reuse it. Changes apply
+              to the next recording.
+            </Text>
+            <SettingsSection
+              title="Recent dictation"
+              footer="Timings stay on this device until the app restarts. Stop to text ends when the composer is updated; display rendering is not included."
+            >
+              {measurements.length === 0 ? (
+                <ListRowLayout
+                  label="No measurements yet"
+                  description="Dictate a message to capture its timing."
+                />
+              ) : (
+                measurements
+                  .slice(-3)
+                  .reverse()
+                  .map((measurement, index) => (
+                    <View
+                      key={measurement.id}
+                      className={cn(
+                        "bg-grouped-card",
+                        index > 0 && "border-t border-border-subtle",
+                      )}
+                    >
+                      <ListRowLayout
+                        label={`${measurement.engine === "parakeet" ? "Parakeet" : "Google"} · ${measurement.status === "complete" ? "Added text" : measurement.status === "error" ? "Failed" : "Cancelled"}`}
+                        description={
+                          [
+                            measurement.preparationMs === undefined
+                              ? null
+                              : `Ready in ${formatTiming(measurement.preparationMs)}`,
+                            measurement.stopToCommitMs === undefined
+                              ? null
+                              : `Stop to text ${formatTiming(measurement.stopToCommitMs)}`,
+                          ]
+                            .filter((value) => value !== null)
+                            .join(" · ") || "No completed timing"
+                        }
+                      />
+                    </View>
+                  ))
+              )}
+              {measurements.length > 0 ? (
+                <SettingsActionRow
+                  icon="trash"
+                  label="Clear timings"
+                  onPress={() => setMeasurements([])}
+                />
+              ) : null}
+            </SettingsSection>
+            <SettingsSection title="Processing details">
+              <SettingsActionRow
+                label="Refresh processing details"
+                loading={readingDiagnostics}
+                onPress={() => void refreshDiagnostics()}
+              />
+              {nativeDiagnostics === null ? (
+                <ListRowLayout label="No processing details available" />
+              ) : nativeDiagnostics ? (
+                <ListRowLayout
+                  label={nativeDiagnostics.engine}
+                  description={[
+                    ["Preparation", nativeDiagnostics.preparationMs],
+                    ["Audio conversion", nativeDiagnostics.decodeMs],
+                    ["Recognition", nativeDiagnostics.inferenceMs],
+                    ["Total processing", nativeDiagnostics.totalMs],
+                  ]
+                    .flatMap(([label, duration]) =>
+                      typeof duration === "number" ? [`${label}: ${formatTiming(duration)}`] : [],
+                    )
+                    .join(" · ")}
+                />
+              ) : null}
+            </SettingsSection>
+          </>
+        ) : null}
         {permission === "ask" || permission === "denied" ? (
           <>
             <SettingsSection title="Microphone access">
@@ -204,6 +325,12 @@ export function SettingsMicrophoneRouteScreen() {
       </ScrollView>
     </View>
   );
+}
+
+function formatTiming(milliseconds: number): string {
+  return milliseconds < 1_000
+    ? `${Math.round(milliseconds)} ms`
+    : `${(milliseconds / 1_000).toFixed(2)} s`;
 }
 
 function MicrophoneRow(props: {

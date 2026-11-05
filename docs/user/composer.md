@@ -36,9 +36,11 @@ On supported iOS and Android devices, use the microphone to dictate a draft,
 then finish recording to insert the transcript. You can edit it before sending.
 Recordings are limited to five minutes and are transcribed on your device.
 
-Android voice input requires Android 12 or later and compatible Google speech
-services. The first use may download a speech model. Keep T3 Code open while
-recording and transcribing.
+Android voice input requires Android 12 or later. In **Settings → Microphone**,
+choose Google on-device speech or Parakeet for English dictation. Parakeet's model
+is included in the Android app and stays ready after its first preparation.
+Google speech requires compatible services and may download a model on first use.
+Keep T3 Code open while recording and transcribing.
 
 ## Attach files
 
