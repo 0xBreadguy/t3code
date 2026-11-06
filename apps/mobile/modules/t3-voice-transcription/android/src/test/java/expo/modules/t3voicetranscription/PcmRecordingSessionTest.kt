@@ -5,14 +5,23 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.file.Files
 import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import kotlin.coroutines.CoroutineContext
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -73,19 +82,41 @@ class PcmRecordingSessionTest {
   fun `cancel unblocks read and deletes partial audio before error event`() = runBlocking {
     val file = Files.createTempFile("pcm-cancel", ".wav").toFile()
     val input = QueuedPcmInput(shortArrayOf(12, 34))
+    val caller = Thread.currentThread()
+    val reading = CompletableDeferred<Thread>()
+    val lifetime = SupervisorJob()
+    val captureScope = CoroutineScope(lifetime + Dispatchers.IO)
+    val capture = object : PcmCaptureInput by input {
+      override fun read(samples: ShortArray, count: Int): Int {
+        val thread = Thread.currentThread()
+        reading.complete(thread)
+        return if (thread === caller) 0 else input.read(samples, count)
+      }
+    }
     val terminal = Channel<PcmRecordingState>(Channel.UNLIMITED)
-    val session = PcmRecordingSession(3, file, input, this, { terminal.trySend(it) })
-    session.start(300.0)
-    input.reads.receive()
-    val result = session.dispose()
-    assertTrue(result.hasError)
-    assertFalse(result.isFinished)
-    assertEquals(null, result.uri)
-    assertFalse(file.exists())
-    assertEquals(1, input.closeCount.get())
-    assertEquals(result, terminal.receive())
-    session.dispose()
-    assertTrue(terminal.tryReceive().isFailure)
+    val session = PcmRecordingSession(3, file, capture, captureScope, { terminal.trySend(it) })
+    try {
+      session.start(300.0)
+      assertNotSame(
+        "Audio reads must leave the synchronous recording caller.",
+        caller,
+        reading.await()
+      )
+      input.reads.receive()
+      val result = session.dispose()
+      assertTrue(result.hasError)
+      assertFalse(result.isFinished)
+      assertEquals(null, result.uri)
+      assertFalse(file.exists())
+      assertEquals(1, input.closeCount.get())
+      assertEquals(result, terminal.receive())
+      session.dispose()
+      assertTrue(terminal.tryReceive().isFailure)
+    } finally {
+      session.dispose()
+      lifetime.cancelAndJoin()
+      file.delete()
+    }
   }
 
   @Test
@@ -161,6 +192,49 @@ class PcmRecordingSessionTest {
     assertFalse(file.exists())
     assertEquals(1, input.closeCount.get())
     assertEquals(result, session.dispose())
+  }
+
+  @Test
+  fun `module cancellation before reader dispatch still releases microphone`() = runBlocking {
+    val file = Files.createTempFile("pcm-cancel-launch", ".wav").toFile()
+    val input = QueuedPcmInput()
+    val queued = LinkedBlockingQueue<Runnable>()
+    val holdFirst = AtomicBoolean(true)
+    val dispatcher = object : CoroutineDispatcher() {
+      override fun dispatch(context: CoroutineContext, block: Runnable) {
+        if (holdFirst.compareAndSet(true, false)) {
+          queued.add(block)
+        } else {
+          Dispatchers.IO.dispatch(context, block)
+        }
+      }
+    }
+    val lifetime = SupervisorJob()
+    val terminal = Channel<PcmRecordingState>(Channel.UNLIMITED)
+    val session = PcmRecordingSession(
+      8,
+      file,
+      input,
+      CoroutineScope(lifetime + dispatcher),
+      { terminal.trySend(it) }
+    )
+    try {
+      session.start(300.0)
+      val launch = queued.poll()
+      assertNotNull("Capture must be queued before returning from start.", launch)
+      lifetime.cancel()
+      requireNotNull(launch).run()
+      val result = terminal.receive()
+      lifetime.join()
+      assertTrue(result.hasError)
+      assertEquals(1, input.closeCount.get())
+      assertFalse(file.exists())
+      assertTrue(input.reads.tryReceive().isFailure)
+    } finally {
+      session.dispose()
+      lifetime.cancelAndJoin()
+      file.delete()
+    }
   }
 
   private fun assertWave(file: File, frames: Int) {

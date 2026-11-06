@@ -6,6 +6,7 @@ import kotlin.math.log10
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
@@ -123,9 +124,10 @@ internal class PcmRecordingSession(
     }
   }
 
+  @OptIn(DelicateCoroutinesApi::class)
   private fun launchReader() {
-    // Enter finally before dispatching so module cancellation cannot strand an opened input.
-    scope.launch(start = CoroutineStart.UNDISPATCHED) {
+    // Dispatch off the caller while guaranteeing finally even when cancelled before startup.
+    scope.launch(start = CoroutineStart.ATOMIC) {
       var failure: String? = null
       try {
         runCatching { withContext(Dispatchers.IO) { readAudio() } }.onFailure {
