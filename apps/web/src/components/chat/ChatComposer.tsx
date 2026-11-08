@@ -3570,11 +3570,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         />
                         <ComposerSpeechButton
                           state={speechInput.state}
-                          progress={null}
                           shortcutLabel={dictationShortcutLabel}
                           disabled={dictationDisabled}
                           onStart={() => void speechInput.start()}
-                          onCancel={() => speechInput.cancel()}
                         />
                       </>
                     ) : null}
