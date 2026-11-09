@@ -6,6 +6,7 @@ import {
   ModelSelection,
   OrchestrationV2DomainEvent,
   OrchestrationV2ProviderSession,
+  type OrchestrationV2PromptSuggestion,
   type OrchestrationV2ProviderThread,
   OrchestrationV2RuntimeRequest,
   ProviderInstanceId,
@@ -34,6 +35,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import { normalizeModelMetricLabel } from "../observability/Attributes.ts";
 import {
@@ -72,6 +74,8 @@ type ProviderRetryItem = Extract<OrchestrationV2TurnItem, { readonly type: "erro
   readonly providerTurnId: ProviderTurnId;
   readonly providerThreadId: ProviderThreadId;
 };
+/** Suggestions outlive their sessions, so keep only the most recently updated threads. */
+const MAX_PROMPT_SUGGESTIONS = 256;
 const WORKING_RUN_STATUSES: ReadonlySet<string> = new Set([
   "preparing",
   "starting",
@@ -216,6 +220,10 @@ export interface ProviderSessionManagerV2Shape {
     readonly providerSessionId: ProviderSessionId;
     readonly threadId: ThreadId;
   }) => Effect.Effect<ReadonlyArray<ThreadId>>;
+  /** The thread's latest predicted next prompt, then each replacement. */
+  readonly subscribePromptSuggestion: (
+    threadId: ThreadId,
+  ) => Stream.Stream<OrchestrationV2PromptSuggestion>;
 }
 
 export class ProviderSessionManagerV2 extends Context.Service<
@@ -353,10 +361,21 @@ export const layerWithOptions = (
       const projectService = yield* Effect.serviceOption(ProjectService.ProjectService);
       const eventSink = yield* EventSink.EventSinkV2;
       const commandOutput = yield* CommandOutputHub.CommandOutputHub;
+      const promptSuggestionStore = yield* SubscriptionRef.make<
+        ReadonlyMap<ThreadId, NonNullable<OrchestrationV2PromptSuggestion>>
+      >(new Map());
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const providerEventIngestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
       const agentScope = yield* AgentScope;
+      // Labs flag, read live: Codex per turn (its shared session outlives a toggle), Claude per query.
+      // Unreadable settings keep it off.
+      const promptSuggestionsEnabled = Option.isNone(serverSettings)
+        ? Effect.succeed(false)
+        : serverSettings.value.getSettings.pipe(
+            Effect.map((settings) => settings.promptSuggestionsEnabled),
+            Effect.orElseSucceed(() => false),
+          );
       const agentAccessSettings = Effect.fn("ProviderSessionManagerV2.agentAccessSettings")(
         function* (threadId: ThreadId) {
           if (Option.isNone(serverSettings)) return { browser: true, device: false };
@@ -2293,6 +2312,21 @@ export const layerWithOptions = (
             if (nativeEvent.type === "command_output.delta") {
               return commandOutput.append(nativeEvent);
             }
+            if (nativeEvent.type === "prompt_suggestion.updated") {
+              return SubscriptionRef.update(promptSuggestionStore, (current) => {
+                const next = new Map(current);
+                next.delete(nativeEvent.threadId);
+                next.set(nativeEvent.threadId, {
+                  runId: nativeEvent.runId,
+                  text: nativeEvent.text,
+                });
+                for (const threadId of next.keys()) {
+                  if (next.size <= MAX_PROMPT_SUGGESTIONS) break;
+                  next.delete(threadId);
+                }
+                return next;
+              });
+            }
             const { event, armed } = retryStalls.track(nativeEvent);
             const armRetryStall = armed === undefined ? Effect.void : retryStalls.arm(armed);
             const releaseLiveOutput =
@@ -2539,6 +2573,7 @@ export const layerWithOptions = (
                   providerSessionId: input.providerSessionId,
                   modelSelection: input.modelSelection,
                   runtimePolicy: input.runtimePolicy,
+                  promptSuggestions: promptSuggestionsEnabled,
                   ...(input.resumeFromSession === undefined
                     ? {}
                     : { resumeFromSession: input.resumeFromSession }),
@@ -2916,6 +2951,21 @@ export const layerWithOptions = (
               ),
             ),
         ),
+        // Stored suggestions can outlive a deleted thread, so check the thread before serving one.
+        subscribePromptSuggestion: (threadId) =>
+          SubscriptionRef.changes(promptSuggestionStore).pipe(
+            Stream.map((suggestions) => suggestions.get(threadId) ?? null),
+            Stream.changes,
+            Stream.mapEffect((suggestion) =>
+              suggestion === null
+                ? Effect.succeed(null)
+                : projectionStore.getThread(threadId).pipe(
+                    Effect.map((thread) => (thread.deletedAt === null ? suggestion : null)),
+                    Effect.orElseSucceed(() => null),
+                  ),
+            ),
+            Stream.changes,
+          ),
       } satisfies ProviderSessionManagerV2Shape);
     }),
   );
