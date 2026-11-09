@@ -1,7 +1,7 @@
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import type { LeadContinuity, LeadScope } from "@t3tools/client-runtime/lead/scope";
 import type { LeadReadResult } from "@t3tools/client-runtime/rpc/lead";
-import { useQuietThreadProjection, useProject } from "../../state/entities";
+import { useQuietThreadProjection, useProject, useProjects } from "../../state/entities";
 import { useEnvironment } from "../../state/environments";
 import { LeadComposer } from "./LeadComposer";
 import { LeadContinuityBar } from "./LeadContinuityBar";
@@ -11,6 +11,8 @@ import { LeadPending } from "./LeadPending";
 import { LeadRolesView } from "./LeadRolesView";
 import { LeadSetup } from "./LeadSetup";
 import { LeadWork } from "./LeadWork";
+import { useLeadAttention } from "./leadAttention";
+import { leadAttentionScopeKey } from "./leadAttention.logic";
 import { useLeadUiStore } from "./leadUiStore";
 import type { LeadPage } from "./useLeadPage";
 import { useLeadLiveState } from "./useLeadLiveState";
@@ -74,6 +76,8 @@ export function LeadPanel({
 }) {
   const environment = useEnvironment(scope.environmentId);
   const project = useProject(scopeProjectRef(scope.environmentId, scope.projectId));
+  const projects = useProjects();
+  const attention = useLeadAttention();
   const data = session.data;
   const running = useLeadRunning(scope, data);
   const { state, pendingHandoffCount } = useLeadLiveState(scope, data);
@@ -104,6 +108,24 @@ export function LeadPanel({
       ? null
       : `${data.thread.model} · ${data.thread.providerInstanceId}`;
   const roleLine = resolvedModel === null ? null : `Runs as ${resolvedModel}`;
+  const projectTitles = new Map(
+    projects.map((entry) => [
+      leadAttentionScopeKey({ environmentId: entry.environmentId, projectId: entry.id }),
+      entry.title,
+    ]),
+  );
+  const otherNeedingYou = attention.filter(
+    (lead) =>
+      lead.needsYou &&
+      !(lead.environmentId === scope.environmentId && lead.projectId === scope.projectId),
+  );
+  const otherNeedingYouLead = otherNeedingYou.length === 1 ? (otherNeedingYou[0] ?? null) : null;
+  const otherNeedingYouLabel =
+    otherNeedingYouLead !== null
+      ? `The ${projectTitles.get(leadAttentionScopeKey(otherNeedingYouLead)) ?? "other project"} lead needs you. Choose it in the project menu.`
+      : otherNeedingYou.length > 1
+        ? `${otherNeedingYou.length} other leads need you. Choose one in the project menu.`
+        : null;
 
   return (
     <div
@@ -142,6 +164,14 @@ export function LeadPanel({
         </p>
       ) : null}
       <LeadContinuityBar continuity={continuity} scope={scope} onSwitch={onSwitch} />
+      {otherNeedingYouLabel !== null ? (
+        <p
+          className="border-b border-border/70 bg-warning/8 px-3 py-1.5 text-2xs text-warning-foreground"
+          data-lead-other-needs-you=""
+        >
+          {otherNeedingYouLabel}
+        </p>
+      ) : null}
       {hostedView === "roles" ? (
         <LeadRolesView
           scope={scope}
