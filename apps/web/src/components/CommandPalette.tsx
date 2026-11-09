@@ -56,6 +56,7 @@ import {
   ChartNoAxesColumnIcon,
   CheckIcon,
   ChevronRightIcon,
+  CircleDotIcon,
   CornerLeftUpIcon,
   FileSearchIcon,
   FolderGit2Icon,
@@ -122,6 +123,7 @@ import {
   usePrimaryEnvironmentId,
 } from "../state/environments";
 import { useProjects, useServerConfigs, useThreadShells, waitForProject } from "../state/entities";
+import { useLeadUiStore } from "./lead/leadUiStore";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
 import {
   appendBrowsePathSegment,
@@ -1151,6 +1153,36 @@ function OpenCommandPaletteDialog(props: {
   };
 
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
+
+  const leadScope =
+    currentProjectEnvironmentId !== null && currentProjectId !== null
+      ? {
+          environmentId: currentProjectEnvironmentId,
+          projectId: currentProjectId,
+        }
+      : null;
+  const leadProjectTitle =
+    currentProjectId === null ? null : (projectTitleById.get(currentProjectId) ?? null);
+  actionItems.push({
+    kind: "action",
+    value: "action:ask-lead",
+    searchTerms: [
+      "lead",
+      "coordinator",
+      "ask",
+      "decisions",
+      "ownership",
+      "roles",
+      "hand over",
+      "review pending work",
+    ],
+    title: leadProjectTitle ? `Ask the ${leadProjectTitle} lead` : "Ask the lead",
+    icon: <CircleDotIcon className={ITEM_ICON_CLASS} />,
+    shortcutCommand: "lead.toggle",
+    run: async () => {
+      useLeadUiStore.getState().openLead(leadScope);
+    },
+  });
 
   if (projects.length > 0) {
     const activeProjectTitle =

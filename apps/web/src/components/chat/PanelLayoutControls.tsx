@@ -6,6 +6,7 @@ import { memo, type ReactNode } from "react";
 import { cn } from "~/lib/utils";
 
 import type { ThreadPanelPresentation } from "../../rightPanelLayout";
+import { LeadButton } from "../lead/LeadButton";
 import { PopoverCreateHandle, PopoverTrigger } from "../ui/popover";
 import { Toggle } from "../ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -14,6 +15,7 @@ export interface PanelLayoutControlsProps {
   showThreadPanelControl?: boolean;
   showTerminalControl?: boolean;
   showRightPanelControl?: boolean;
+  showLeadControl?: boolean;
   terminalAvailable: boolean;
   terminalOpen: boolean;
   terminalShortcutLabel: string | null;
@@ -34,6 +36,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
   showThreadPanelControl = true,
   showTerminalControl = true,
   showRightPanelControl = true,
+  showLeadControl = true,
   terminalAvailable,
   terminalOpen,
   terminalShortcutLabel,
@@ -128,6 +131,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
           </TooltipPopup>
         </Tooltip>
       ) : null}
+      {showLeadControl ? <LeadButton /> : null}
     </div>
   );
 });
@@ -168,7 +172,12 @@ export function ThreadPanelHeaderControl(props: PanelLayoutControlsProps) {
       className="absolute top-[var(--workspace-controls-top)] right-[calc(env(safe-area-inset-right)+0.75rem)] z-50 flex h-[var(--workspace-topbar-height)] items-center [-webkit-app-region:no-drag]"
       data-workspace-titlebar-controls
     >
-      <PanelLayoutControls {...props} showTerminalControl={false} showRightPanelControl={false} />
+      <PanelLayoutControls
+        {...props}
+        showTerminalControl={false}
+        showRightPanelControl={false}
+        showLeadControl={false}
+      />
     </div>
   );
 }

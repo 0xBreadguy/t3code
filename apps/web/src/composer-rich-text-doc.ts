@@ -169,6 +169,19 @@ export const ComposerBoldSelectionOnlyExtension = Extension.create({
 });
 
 /**
+ * Mod+I italicizes selected text only. Without a selection the app receives
+ * the chord, so the default lead toggle is not swallowed by the editor.
+ */
+export const ComposerItalicSelectionOnlyExtension = Extension.create({
+  name: "composerItalicSelectionOnly",
+  priority: 1000,
+  addKeyboardShortcuts() {
+    const ignoreWithoutSelection = () => this.editor.state.selection.empty;
+    return { "Mod-i": ignoreWithoutSelection, "Mod-I": ignoreWithoutSelection };
+  },
+});
+
+/**
  * Tiptap's block chords can nest blocks inside quotes that the serializer cannot write,
  * silently dropping their text from stored drafts.
  */

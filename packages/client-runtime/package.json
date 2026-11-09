@@ -27,6 +27,26 @@
       "types": "./src/handoff.ts",
       "default": "./src/handoff.ts"
     },
+    "./lead/scope": {
+      "types": "./src/lead/scope.ts",
+      "default": "./src/lead/scope.ts"
+    },
+    "./lead/draft": {
+      "types": "./src/lead/draft.ts",
+      "default": "./src/lead/draft.ts"
+    },
+    "./lead/context": {
+      "types": "./src/lead/context.ts",
+      "default": "./src/lead/context.ts"
+    },
+    "./lead/status": {
+      "types": "./src/lead/status.ts",
+      "default": "./src/lead/status.ts"
+    },
+    "./lead/copy": {
+      "types": "./src/lead/copy.ts",
+      "default": "./src/lead/copy.ts"
+    },
     "./device/stream": {
       "types": "./src/device/stream.ts",
       "default": "./src/device/stream.ts"
@@ -106,6 +126,10 @@
     "./rpc": {
       "types": "./src/rpc/index.ts",
       "default": "./src/rpc/index.ts"
+    },
+    "./rpc/lead": {
+      "types": "./src/rpc/lead.ts",
+      "default": "./src/rpc/lead.ts"
     },
     "./operations": {
       "types": "./src/operations/index.ts",

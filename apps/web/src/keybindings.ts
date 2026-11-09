@@ -390,6 +390,28 @@ export function isRichTextBoldShortcut(
   );
 }
 
+/**
+ * Whether Mod+I should italicize selected text in the rich-text composer. The
+ * composer binds the same chord for italics; with no selection the app gets it
+ * (the lead toggle by default), matching Mod+B.
+ */
+export function isRichTextItalicShortcut(
+  event: ShortcutEventLike,
+  selection: Pick<Selection, "isCollapsed"> | null,
+): boolean {
+  if (event.type !== undefined && event.type !== "keydown") {
+    return false;
+  }
+  return (
+    selection !== null &&
+    !selection.isCollapsed &&
+    resolveEventKeys(event).has("i") &&
+    (event.metaKey || event.ctrlKey) &&
+    !event.altKey &&
+    !event.shiftKey
+  );
+}
+
 export function isTerminalClearShortcut(
   event: ShortcutEventLike,
   platform = navigator.platform,

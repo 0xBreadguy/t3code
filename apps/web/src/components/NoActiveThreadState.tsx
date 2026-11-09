@@ -1,5 +1,6 @@
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "./ui/empty";
 import { SidebarInset } from "./ui/sidebar";
+import { LeadButton } from "./lead/LeadButton";
 import { isElectron } from "../env";
 import { WorkspacePageHeader } from "./WorkspacePageHeader";
 
@@ -17,6 +18,7 @@ export function NoActiveThreadState() {
               </span>
             </div>
           )}
+          <LeadButton className="ms-auto flex shrink-0" />
         </WorkspacePageHeader>
 
         <Empty className="flex-1">

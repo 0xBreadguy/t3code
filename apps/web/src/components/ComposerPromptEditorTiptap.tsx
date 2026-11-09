@@ -74,6 +74,7 @@ import {
   convertBulletItemToTask,
   ComposerCodeExtension,
   ComposerItalicExtension,
+  ComposerItalicSelectionOnlyExtension,
   ComposerTaskItemExtension,
   ComposerTaskListExtension,
   flatToMarkdown,
@@ -844,6 +845,7 @@ function createComposerExtensions(richText: boolean) {
       ? [
           ComposerBoldSelectionOnlyExtension,
           ComposerItalicExtension,
+          ComposerItalicSelectionOnlyExtension,
           ComposerCodeExtension,
           ComposerCodeBlockExtension.extend({
             addNodeView() {

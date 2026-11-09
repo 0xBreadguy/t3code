@@ -20,9 +20,15 @@ import {
 import { getLocalStorageItem, removeLocalStorageItem } from "../hooks/useLocalStorage";
 import {
   isRichTextBoldShortcut,
+  isRichTextItalicShortcut,
   resolveShortcutCommand,
   shortcutLabelForCommand,
 } from "../keybindings";
+import { LeadHost } from "./lead/LeadHost";
+import { LeadBackendProvider } from "../rpc/lead";
+import { unavailableLeadBackend } from "@t3tools/client-runtime/rpc/lead";
+import { useLeadPresentation } from "./lead/useLeadPresentation";
+import { useLeadUiStore } from "./lead/leadUiStore";
 import { isEditableFocused } from "../lib/editableFocus";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
@@ -302,6 +308,32 @@ function registerAppShellCommands(router: AnyRouter, shellElement: Element): () 
     registerNavigationHistoryCommands(router),
     registerWorkspaceFocusCommands(router),
     registerPullRequestsEscapeCommand(router),
+    registerCommands(
+      {
+        "lead.toggle": (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          useLeadUiStore.getState().toggleLead();
+          return true;
+        },
+      },
+      {
+        when: (event) => {
+          if (isAppModalPage(router.state.location.pathname)) return false;
+          if (isKeybindingCaptureTarget(event)) return false;
+          if (isCommandPaletteOpen()) return false;
+          // Selected text stays with the rich-text composer, matching Mod+B.
+          if (
+            isRichTextItalicShortcut(event, window.getSelection()) &&
+            event.target instanceof HTMLElement &&
+            event.target.closest('[data-composer-rich-text="true"]')
+          ) {
+            return false;
+          }
+          return true;
+        },
+      },
+    ),
     registerMenuAction("open-settings", () => {
       if (!/^\/settings(\/|$)/.test(router.state.location.pathname))
         void router.navigate({ to: "/settings" });
@@ -403,6 +435,7 @@ function SidebarControl() {
 
 export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const sidebarArea = workspaceAreaProps("sidebar", 0, "Threads");
+  const leadPresentation = useLeadPresentation();
   const [sidebarRouteReveal] = useState<SidebarRouteReveal>(() => ({
     observedKey: null,
     pendingKey: null,
@@ -444,39 +477,43 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
 
   return (
     <PanelAnimationSuppressionProvider value={panelAnimationsSuppressed}>
-      <SidebarProvider
-        className="h-dvh! min-h-0!"
-        data-panel-animations={routePanelAnimationsActive ? "true" : "false"}
-        defaultOpen
-        style={sidebarProviderStyle}
-      >
-        <SidebarBrandWidthProbe isElectron={isElectron} onWidthChange={setBrandWidth} />
-        <Sidebar
-          side="left"
-          collapsible="offcanvas"
-          data-app-sidebar=""
-          {...sidebarArea}
-          role="navigation"
-          aria-label="Threads"
-          resizable={{
-            maxWidth: sidebarMaximumWidth,
-            minWidth: sidebarMinimumWidth,
-            shouldAcceptWidth: ({ currentWidth, nextWidth, wrapper }) =>
-              nextWidth <= currentWidth ||
-              wrapper.clientWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,
-            storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
-            onResize: setSidebarWidth,
-          }}
-          style={windowControlsInsetStyle}
+      <LeadBackendProvider backend={unavailableLeadBackend}>
+        <SidebarProvider
+          className="h-dvh! min-h-0!"
+          data-panel-animations={routePanelAnimationsActive ? "true" : "false"}
+          data-lead-docked={leadPresentation.presentation === "docked" ? "true" : undefined}
+          defaultOpen
+          style={sidebarProviderStyle}
         >
-          <ThreadSidebar routeReveal={sidebarRouteReveal} />
-          <SidebarRail onDoubleClick={resetSidebarWidth} />
-        </Sidebar>
-        {children}
-        <BackgroundThreadAnnouncer />
-        <SidebarControl />
-        {isElectron ? <HistorySwipeNavigation /> : null}
-      </SidebarProvider>
+          <SidebarBrandWidthProbe isElectron={isElectron} onWidthChange={setBrandWidth} />
+          <Sidebar
+            side="left"
+            collapsible="offcanvas"
+            data-app-sidebar=""
+            {...sidebarArea}
+            role="navigation"
+            aria-label="Threads"
+            resizable={{
+              maxWidth: sidebarMaximumWidth,
+              minWidth: sidebarMinimumWidth,
+              shouldAcceptWidth: ({ currentWidth, nextWidth, wrapper }) =>
+                nextWidth <= currentWidth ||
+                wrapper.clientWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,
+              storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
+              onResize: setSidebarWidth,
+            }}
+            style={windowControlsInsetStyle}
+          >
+            <ThreadSidebar routeReveal={sidebarRouteReveal} />
+            <SidebarRail onDoubleClick={resetSidebarWidth} />
+          </Sidebar>
+          {children}
+          <LeadHost />
+          <BackgroundThreadAnnouncer />
+          <SidebarControl />
+          {isElectron ? <HistorySwipeNavigation /> : null}
+        </SidebarProvider>
+      </LeadBackendProvider>
     </PanelAnimationSuppressionProvider>
   );
 }
