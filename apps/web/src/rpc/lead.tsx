@@ -3,7 +3,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { LeadBackend, LeadCapability } from "@t3tools/client-runtime/rpc/lead";
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useState, type ReactNode } from "react";
 
 import { useStableCallback } from "../hooks/useStableCallback";
 import { useServerConfigs } from "../state/entities";
@@ -42,16 +42,11 @@ function unwrap<A, E>(result: AtomCommandResult<A, E>): A {
 
 /**
  * Runs inside the app shell so the command hooks can reach the environment
- * registry. Transport identity is stable; capability re-reads ServerConfig.
+ * registry. The transport is rebuilt only when server configs change, so a
+ * capability arriving after connection takes effect without polling.
  */
 export function LeadBackendHost({ children }: { readonly children: ReactNode }) {
   const serverConfigs = useServerConfigs();
-  const configsRef = useRef(serverConfigs);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mirrors server configs for capability reads after the commit
-  useEffect(() => {
-    configsRef.current = serverConfigs;
-  }, [serverConfigs]);
-
   const ensureCommand = useAtomCommand(leadEnvironment.ensure, { reportFailure: false });
   const readCommand = useAtomCommand(leadEnvironment.read, { reportFailure: false });
   const sendCommand = useAtomCommand(leadEnvironment.send, { reportFailure: false });
@@ -63,9 +58,9 @@ export function LeadBackendHost({ children }: { readonly children: ReactNode }) 
   const grant = useStableCallback(grantCommand);
   const revoke = useStableCallback(revokeCommand);
 
-  const [backend] = useState<LeadBackend>(() => ({
+  const createBackend = (): LeadBackend => ({
     capability: (environmentId) => {
-      const config = configsRef.current.get(environmentId);
+      const config = serverConfigs.get(environmentId);
       if (config?.projectLead === true) {
         // Text-only until LeadSendInput accepts context refs.
         return { kind: "supported", contextRefs: false } satisfies LeadCapability;
@@ -80,6 +75,16 @@ export function LeadBackendHost({ children }: { readonly children: ReactNode }) 
     send: async (environmentId, input) => unwrap(await send({ environmentId, input })),
     grant: async (environmentId, input) => unwrap(await grant({ environmentId, input })),
     revoke: async (environmentId, input) => unwrap(await revoke({ environmentId, input })),
+  });
+
+  const [snapshot, setSnapshot] = useState(() => ({
+    configs: serverConfigs,
+    backend: createBackend(),
   }));
-  return <LeadBackendProvider backend={backend}>{children}</LeadBackendProvider>;
+  if (snapshot.configs !== serverConfigs) {
+    const backend = createBackend();
+    setSnapshot({ configs: serverConfigs, backend });
+    return <LeadBackendProvider backend={backend}>{children}</LeadBackendProvider>;
+  }
+  return <LeadBackendProvider backend={snapshot.backend}>{children}</LeadBackendProvider>;
 }
