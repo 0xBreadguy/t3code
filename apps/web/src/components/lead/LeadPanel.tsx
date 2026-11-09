@@ -155,7 +155,14 @@ export function LeadPanel({
           {data === null && capabilityReason === null ? (
             <p className="px-3 py-2 text-2xs text-muted-foreground">Reading this project's lead…</p>
           ) : null}
-          <LeadPending threadRef={threadRef} />
+          <LeadPending
+            key={
+              threadRef === null
+                ? `${scope.environmentId}\u0000${scope.projectId}`
+                : `${scope.environmentId}\u0000${threadRef.threadId}`
+            }
+            threadRef={threadRef}
+          />
           {data !== null && data.binding === null && capabilityReason === null ? (
             <LeadSetup
               scope={scope}

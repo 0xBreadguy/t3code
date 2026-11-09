@@ -1,20 +1,23 @@
 import {
-  buildPendingUserInputAnswers,
+  setPendingUserInputCustomAnswer,
   togglePendingUserInputOptionSelection,
   type PendingUserInputDraftAnswer,
 } from "@t3tools/client-runtime/state/pending-user-input";
 import {
-  derivePendingThreadRequests,
-  seedUserInputDraftAnswers,
-} from "@t3tools/client-runtime/state/thread-requests";
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+  type AtomCommandResult,
+} from "@t3tools/client-runtime/state/runtime";
+import { derivePendingThreadRequests } from "@t3tools/client-runtime/state/thread-requests";
 import {
   AuthOrchestrationOperateScope,
   type ProviderApprovalDecision,
   type RuntimeRequestId,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
+import { derivePendingUserInputProgress } from "../../pendingUserInput";
 import { derivePendingApprovals, derivePendingUserInputs } from "../../session-logic";
 import { useQuietThreadProjection } from "../../state/entities";
 import { useEnvironmentScope } from "../../state/session";
@@ -24,8 +27,26 @@ import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { ComposerPendingApprovalActions } from "../chat/ComposerPendingApprovalActions";
 import { ComposerPendingUserInputPanel } from "../chat/ComposerPendingUserInputPanel";
 import { Button } from "../ui/button";
+import { Textarea } from "../ui/textarea";
+import {
+  emptyLeadPendingAnswers,
+  leadPendingAnswersFor,
+  leadPendingAnswersToSubmit,
+  leadPendingDrafts,
+  leadPendingRequestKey,
+  moveLeadPendingQuestion,
+  withLeadPendingDraft,
+} from "./leadPending.logic";
 
-const EMPTY_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
+const EMPTY_DRAFTS: Record<string, PendingUserInputDraftAnswer> = {};
+const NO_PENDING_REQUESTS = { approvals: [], userInputs: [] } as const;
+const NO_PENDING_APPROVALS: ReturnType<typeof derivePendingApprovals> = [];
+const NO_PENDING_USER_INPUTS: ReturnType<typeof derivePendingUserInputs> = [];
+
+interface LeadPendingError {
+  readonly key: string;
+  readonly message: string;
+}
 
 /**
  * Real provider approvals and questions from the lead's own turn. They stay
@@ -48,83 +69,193 @@ export function LeadPending({ threadRef }: { readonly threadRef: ScopedThreadRef
     reportFailure: false,
   });
   const [responding, setResponding] = useState<ReadonlyArray<RuntimeRequestId>>([]);
-  const [answers, setAnswers] = useState<Record<string, PendingUserInputDraftAnswer>>({});
-  const [questionIndex, setQuestionIndex] = useState(0);
+  const [error, setError] = useState<LeadPendingError | null>(null);
+  const inFlight = useRef(new Set<string>());
 
-  if (threadRef === null || projection === null) return null;
-  const pending = derivePendingThreadRequests(projection.projection);
-  const approvals = derivePendingApprovals(pending.approvals);
-  const userInputs = derivePendingUserInputs(pending.userInputs);
+  const pending =
+    projection === null ? NO_PENDING_REQUESTS : derivePendingThreadRequests(projection.projection);
+  const approvals =
+    projection === null || pending.approvals.length === 0
+      ? NO_PENDING_APPROVALS
+      : derivePendingApprovals(pending.approvals);
+  const userInputs =
+    projection === null || pending.userInputs.length === 0
+      ? NO_PENDING_USER_INPUTS
+      : derivePendingUserInputs(pending.userInputs);
   const activeInput = userInputs[0] ?? null;
-  const draftAnswers =
+  const requestKey =
+    threadRef === null || activeInput === null
+      ? null
+      : leadPendingRequestKey(threadRef.environmentId, threadRef.threadId, activeInput.requestId);
+  const [storedAnswers, setStoredAnswers] = useState(() => emptyLeadPendingAnswers(requestKey));
+  // Drafts, question position and errors belong to one request only; a scope,
+  // thread or request change starts clean rather than carrying them over.
+  const answers = leadPendingAnswersFor(storedAnswers, requestKey);
+  if (answers !== storedAnswers) setStoredAnswers(answers);
+  const drafts =
+    activeInput === null ? EMPTY_DRAFTS : leadPendingDrafts(activeInput.questions, answers);
+  const progress =
     activeInput === null
-      ? EMPTY_ANSWERS
-      : seedUserInputDraftAnswers(activeInput.questions, answers);
+      ? null
+      : derivePendingUserInputProgress(activeInput.questions, drafts, answers.questionIndex);
+  const activeQuestion = progress?.activeQuestion ?? null;
+  const canAnswerInput =
+    activeInput !== null && canOperate && activeInput.responseCapability !== "not_resumable";
+  const inputBusy = activeInput !== null && responding.includes(activeInput.requestId);
 
-  const onApproval = async (requestId: RuntimeRequestId, decision: ProviderApprovalDecision) => {
-    if (!canOperate) return;
+  const sendRequest = async <R extends AtomCommandResult<unknown, unknown>>(
+    requestId: RuntimeRequestId,
+    fallback: string,
+    action: () => Promise<R>,
+  ) => {
+    if (threadRef === null) return;
+    const key = leadPendingRequestKey(threadRef.environmentId, threadRef.threadId, requestId);
+    if (inFlight.current.has(key)) return;
+    inFlight.current.add(key);
     setResponding((current) => (current.includes(requestId) ? current : [...current, requestId]));
-    await respondToApproval({
-      environmentId: threadRef.environmentId,
-      input: { threadId: threadRef.threadId, requestId, decision },
-    });
+    const result = await action();
+    const interrupted = isAtomCommandInterrupted(result);
+    if (result._tag === "Failure" && !interrupted) {
+      const failure = squashAtomCommandFailure(result);
+      setError({
+        key,
+        message:
+          failure instanceof Error && failure.message.trim().length > 0
+            ? failure.message
+            : fallback,
+      });
+    } else if (!interrupted) {
+      setError((current) => (current?.key === key ? null : current));
+    }
+    inFlight.current.delete(key);
     setResponding((current) => current.filter((id) => id !== requestId));
+  };
+
+  const onApproval = (requestId: RuntimeRequestId, decision: ProviderApprovalDecision) => {
+    if (threadRef === null || !canOperate) return Promise.resolve();
+    return sendRequest(requestId, "Couldn't send that approval decision.", () =>
+      respondToApproval({
+        environmentId: threadRef.environmentId,
+        input: { threadId: threadRef.threadId, requestId, decision },
+      }),
+    );
+  };
+
+  const onToggleOption = (questionId: string, optionValue: string) => {
+    if (activeInput === null) return;
+    const question = activeInput.questions.find((entry) => entry.id === questionId);
+    if (question === undefined) return;
+    setStoredAnswers((current) => {
+      const currentAnswers = leadPendingAnswersFor(current, requestKey);
+      return withLeadPendingDraft(
+        currentAnswers,
+        questionId,
+        togglePendingUserInputOptionSelection(
+          question,
+          currentAnswers.drafts[questionId],
+          optionValue,
+        ),
+      );
+    });
+  };
+
+  const onCustomAnswer = (questionId: string, value: string) => {
+    if (activeInput === null) return;
+    const question = activeInput.questions.find((entry) => entry.id === questionId);
+    if (question === undefined) return;
+    setStoredAnswers((current) => {
+      const currentAnswers = leadPendingAnswersFor(current, requestKey);
+      return withLeadPendingDraft(
+        currentAnswers,
+        questionId,
+        setPendingUserInputCustomAnswer(question, currentAnswers.drafts[questionId], value),
+      );
+    });
+  };
+
+  const moveQuestion = (direction: 1 | -1) => {
+    if (activeInput === null) return;
+    setStoredAnswers((current) =>
+      moveLeadPendingQuestion(
+        leadPendingAnswersFor(current, requestKey),
+        activeInput.questions.length,
+        direction,
+      ),
+    );
+  };
+
+  const submitAnswers = () => {
+    if (threadRef === null || activeInput === null || !canOperate) return;
+    if (activeInput.responseCapability === "not_resumable") return;
+    const submitted = leadPendingAnswersToSubmit(activeInput.questions, answers);
+    if (submitted === null) return;
+    void sendRequest(activeInput.requestId, "Couldn't submit those answers.", () =>
+      respondToUserInput({
+        environmentId: threadRef.environmentId,
+        input: {
+          threadId: threadRef.threadId,
+          requestId: activeInput.requestId,
+          answers: submitted,
+        },
+      }),
+    );
   };
 
   const onAdvance = () => {
     if (activeInput === null || !canOperate) return;
-    const resolved = buildPendingUserInputAnswers(activeInput.questions, draftAnswers);
-    if (questionIndex < activeInput.questions.length - 1) {
-      setQuestionIndex((index) => index + 1);
+    if (progress !== null && !progress.isLastQuestion) {
+      if (progress.canAdvance) moveQuestion(1);
       return;
     }
-    if (resolved === null) return;
-    const requestId = activeInput.requestId;
-    setResponding((current) => (current.includes(requestId) ? current : [...current, requestId]));
-    void respondToUserInput({
-      environmentId: threadRef.environmentId,
-      input: { threadId: threadRef.threadId, requestId, answers: resolved },
-    }).finally(() => {
-      setResponding((current) => current.filter((id) => id !== requestId));
-    });
+    submitAnswers();
   };
 
   const onDismiss = (requestId: RuntimeRequestId) => {
-    if (!canOperate) return;
-    setResponding((current) => (current.includes(requestId) ? current : [...current, requestId]));
-    void dismissUserInput({
-      environmentId: threadRef.environmentId,
-      input: { threadId: threadRef.threadId, requestId },
-    }).finally(() => {
-      setResponding((current) => current.filter((id) => id !== requestId));
-    });
+    if (threadRef === null || !canOperate) return;
+    void sendRequest(requestId, "Couldn't dismiss the question.", () =>
+      dismissUserInput({
+        environmentId: threadRef.environmentId,
+        input: { threadId: threadRef.threadId, requestId },
+      }),
+    );
   };
 
+  if (threadRef === null || projection === null) return null;
   if (approvals.length === 0 && activeInput === null) return null;
 
   return (
     <div className="space-y-2 border-b border-border/70 px-3 py-2" data-lead-pending="">
-      {approvals.map((approval) => (
-        <div
-          key={approval.requestId}
-          className="rounded-md border border-warning/32 bg-warning/8 p-2"
-        >
-          <p className="text-sm font-medium text-warning-foreground">
-            {approval.detail ?? approval.reason ?? "The lead needs your approval"}
-          </p>
-          <div className="mt-1.5 flex flex-wrap gap-1.5">
-            <ComposerPendingApprovalActions
-              presentation="inline"
-              requestId={approval.requestId}
-              isResponding={responding.includes(approval.requestId)}
-              canRespond={canOperate && approval.responseCapability === "live"}
-              options={approval.options}
-              onRespondToApproval={onApproval}
-            />
+      {approvals.map((approval) => {
+        const approvalKey = leadPendingRequestKey(
+          threadRef.environmentId,
+          threadRef.threadId,
+          approval.requestId,
+        );
+        return (
+          <div
+            key={approval.requestId}
+            className="rounded-md border border-warning/32 bg-warning/8 p-2"
+          >
+            <p className="text-sm font-medium text-warning-foreground">
+              {approval.detail ?? approval.reason ?? "The lead needs your approval"}
+            </p>
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              <ComposerPendingApprovalActions
+                presentation="inline"
+                requestId={approval.requestId}
+                isResponding={responding.includes(approval.requestId)}
+                canRespond={canOperate && approval.responseCapability === "live"}
+                options={approval.options}
+                onRespondToApproval={onApproval}
+              />
+            </div>
+            {error?.key === approvalKey ? (
+              <p className="mt-1 text-2xs text-destructive-foreground">{error.message}</p>
+            ) : null}
           </div>
-        </div>
-      ))}
-      {activeInput !== null ? (
+        );
+      })}
+      {activeInput !== null && activeQuestion !== null ? (
         <div className="overflow-hidden rounded-md border border-border/70">
           <ComposerPendingUserInputPanel
             pendingUserInputs={userInputs}
@@ -132,29 +263,67 @@ export function LeadPending({ threadRef }: { readonly threadRef: ScopedThreadRef
             threadRef={threadRef}
             disabled={!canOperate}
             respondingRequestIds={[...responding]}
-            answers={draftAnswers}
-            questionIndex={questionIndex}
-            onToggleOption={(questionId, optionValue) => {
-              const question = activeInput.questions.find((entry) => entry.id === questionId);
-              if (question === undefined) return;
-              setAnswers((current) => ({
-                ...current,
-                [questionId]: togglePendingUserInputOptionSelection(
-                  question,
-                  draftAnswers[questionId],
-                  optionValue,
-                ),
-              }));
-            }}
+            answers={drafts}
+            questionIndex={answers.questionIndex}
+            onToggleOption={onToggleOption}
             onAdvance={onAdvance}
             onDismiss={onDismiss}
           />
-          {questionIndex < activeInput.questions.length - 1 ? (
+          {activeQuestion.allowCustomAnswer !== false ? (
             <div className="border-t border-border/70 px-2 py-1.5">
-              <Button size="xs" variant="ghost" onClick={onAdvance}>
+              <Textarea
+                value={drafts[activeQuestion.id]?.customAnswer ?? ""}
+                onChange={(event) => onCustomAnswer(activeQuestion.id, event.target.value)}
+                rows={2}
+                size="sm"
+                disabled={!canAnswerInput || inputBusy}
+                aria-label={`Your answer to: ${activeQuestion.header}`}
+                placeholder="Type your answer"
+              />
+              <p className="mt-1 text-3xs text-muted-foreground">
+                Text only. Files can't be attached in the lead panel.
+              </p>
+            </div>
+          ) : null}
+          {activeQuestion.options.length === 0 && activeQuestion.allowCustomAnswer === false ? (
+            <p className="border-t border-border/70 px-2 py-1.5 text-2xs text-muted-foreground">
+              This question has no answer options and doesn't accept a typed answer.
+            </p>
+          ) : null}
+          <div className="flex flex-wrap items-center gap-1.5 border-t border-border/70 px-2 py-1.5">
+            {answers.questionIndex > 0 ? (
+              <Button
+                size="xs"
+                variant="ghost"
+                disabled={inputBusy}
+                onClick={() => moveQuestion(-1)}
+              >
+                Back
+              </Button>
+            ) : null}
+            <span className="ms-auto" />
+            {progress?.isLastQuestion === true ? (
+              <Button
+                size="xs"
+                disabled={!canAnswerInput || inputBusy || !progress.isComplete}
+                onClick={onAdvance}
+              >
+                {activeInput.questions.length > 1 ? "Submit answers" : "Submit answer"}
+              </Button>
+            ) : (
+              <Button
+                size="xs"
+                disabled={!canAnswerInput || inputBusy || progress?.canAdvance !== true}
+                onClick={onAdvance}
+              >
                 Next question
               </Button>
-            </div>
+            )}
+          </div>
+          {error !== null && error.key === requestKey ? (
+            <p className="border-t border-border/70 px-2 py-1.5 text-2xs text-destructive-foreground">
+              {error.message}
+            </p>
           ) : null}
         </div>
       ) : null}
