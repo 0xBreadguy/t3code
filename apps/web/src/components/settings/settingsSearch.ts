@@ -277,6 +277,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["new thread project provider reasoning effort"],
   },
   {
+    id: "roles-models",
+    title: "Roles & models",
+    to: "/settings/threads",
+    scope: "project-defaults",
+    searchTerms: [
+      "agent role lead architecture implementation research review design test general model provider reasoning effort delegate subagent",
+    ],
+  },
+  {
     id: "default-permissions",
     title: "Permissions",
     to: "/settings/threads",

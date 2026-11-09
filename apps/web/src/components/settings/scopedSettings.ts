@@ -1,4 +1,5 @@
 import {
+  type AgentRoleModelSelectionPatch,
   ClientSettingsSchema,
   type ClientSettingsPatch,
   type EnvironmentId,
@@ -254,6 +255,22 @@ export function planScopedSettingsPatch(
                       ...serverPatch.worktreeCleanup.rules,
                     },
                   };
+                  continue;
+                }
+                // Roles are sparse: a project override holds only roles set for
+                // this project, so untouched roles keep inheriting the environment.
+                if (key === "agentRoleModels") {
+                  const roles: Record<string, unknown> = isPlainObject(current.agentRoleModels)
+                    ? { ...current.agentRoleModels }
+                    : {};
+                  for (const [role, selection] of Object.entries(
+                    value as AgentRoleModelSelectionPatch,
+                  )) {
+                    if (selection === null) delete roles[role];
+                    else if (selection !== undefined) roles[role] = selection;
+                  }
+                  if (Object.keys(roles).length === 0) delete next.agentRoleModels;
+                  else next.agentRoleModels = roles;
                   continue;
                 }
                 // Inherit sends null; remove overrides whose keys cannot store null.

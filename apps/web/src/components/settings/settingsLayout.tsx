@@ -303,6 +303,7 @@ export function SettingsRow({
   control,
   serverScoped = false,
   settingKeys = EMPTY_SETTING_KEYS,
+  environmentWide: environmentWideOverride,
   mixed: mixedOverride,
   children,
   className,
@@ -316,6 +317,8 @@ export function SettingsRow({
   control?: ReactNode;
   serverScoped?: boolean;
   settingKeys?: readonly (keyof ServerSettings)[];
+  /** Rows with their own inheritance readback set this because they pass no setting keys. */
+  environmentWide?: boolean;
   mixed?: boolean;
   children?: ReactNode;
 }) {
@@ -338,7 +341,8 @@ export function SettingsRow({
   const isProjectScope =
     context !== null && (context.scope.kind === "project" || context.scope.kind === "checkout");
   const scopedKeys = settingKeys.filter(isProjectScopedSettingKey);
-  const environmentWide = isProjectScope && serverScoped && scopedKeys.length === 0;
+  const environmentWide =
+    environmentWideOverride ?? (isProjectScope && serverScoped && scopedKeys.length === 0);
   const mixed =
     mixedOverride ?? (context !== null && scopedSettingsAreMixed(context.targets, settingKeys));
   const source =

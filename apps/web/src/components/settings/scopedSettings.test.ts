@@ -359,6 +359,46 @@ describe("scoped settings writes", () => {
     });
   });
 
+  it("merges project role overrides per role and leaves inherited roles out of the entry", () => {
+    const claude = ProviderInstanceId.make("claudeAgent");
+    const lead = { instanceId: claude, model: "opus-5" };
+    const review = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6-sol" };
+    const implementation = { instanceId: claude, model: "sonnet-5" };
+    const withRoles = environment("Server", {
+      settings: {
+        agentRoleModels: { lead },
+        projectSettingsOverrides: { [projectId]: { agentRoleModels: { review } } },
+      },
+    });
+    const plan = planScopedSettingsPatch(project, [withRoles], {
+      agentRoleModels: { implementation },
+    });
+    expect(plan.serverWrites).toHaveLength(1);
+    expect(plan.serverWrites[0]?.patch).toEqual({
+      projectSettingsOverrides: {
+        [projectId]: { agentRoleModels: { review, implementation } },
+      },
+    });
+    expect(
+      planScopedSettingsPatch(project, [withRoles], {
+        agentRoleModels: { review: null },
+      }).serverWrites[0]?.patch,
+    ).toEqual({
+      projectSettingsOverrides: { [projectId]: {} },
+    });
+    expect(
+      planScopedSettingsPatch(project, [withRoles], {
+        agentRoleModels: { review: { instanceId: claude, model: "opus-5" } },
+      }).serverWrites[0]?.patch,
+    ).toEqual({
+      projectSettingsOverrides: {
+        [projectId]: {
+          agentRoleModels: { review: { instanceId: claude, model: "opus-5" } },
+        },
+      },
+    });
+  });
+
   it("keeps each project's other cleanup rules when changing one rule across machines", () => {
     const machine = environment("Laptop", {
       settings: {
