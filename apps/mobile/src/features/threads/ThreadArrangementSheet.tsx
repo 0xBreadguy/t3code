@@ -15,6 +15,8 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { environmentServerConfigsAtom } from "../../state/server";
+import { useLeadThreadKeys } from "../../state/entities";
+import { withoutLeadThreads } from "../../state/leadThreadFilter";
 import { environmentThreadShells } from "../../state/threads";
 import { sortSettledThreads } from "@t3tools/client-runtime/state/thread-sort";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../../state/olderSettledShelf";
@@ -162,7 +164,12 @@ function DragHandle(props: {
 }
 
 function ThreadArrangementSheet(props: { onClose: () => void }) {
-  const threads = useAtomValue(environmentThreadShells.navigationThreadShellsAtom);
+  const rawThreads = useAtomValue(environmentThreadShells.navigationThreadShellsAtom);
+  const leadThreadKeys = useLeadThreadKeys();
+  const threads = useMemo(
+    () => withoutLeadThreads(rawThreads, leadThreadKeys),
+    [rawThreads, leadThreadKeys],
+  );
   const configs = useAtomValue(environmentServerConfigsAtom);
   const queuedThreadKeys = useAtomValue(queuedThreadKeysAtom);
   const pendingOrder = useAtomValue(pendingThreadOrderAtom);

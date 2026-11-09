@@ -1,6 +1,6 @@
 import { Button } from "../../components/ui/Button";
 import { QuestionAttachments } from "./QuestionAttachments";
-import type { EnvironmentId, RuntimeRequestId } from "@t3tools/contracts";
+import type { EnvironmentId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
 import type { ThreadUserInputQuestion } from "@t3tools/client-runtime/state/thread-requests";
 import { useRef } from "react";
 import { Platform, Pressable, ScrollView, View, type LayoutChangeEvent } from "react-native";
@@ -56,6 +56,12 @@ export interface PendingUserInputCardProps {
   ) => void;
   readonly onSubmit: () => Promise<unknown>;
   readonly onDismiss: () => Promise<unknown>;
+  /** Answers a lead turn from a sheet, which is not the selected thread. */
+  readonly threadTarget?:
+    | { readonly environmentId: EnvironmentId; readonly threadId: ThreadId }
+    | undefined;
+  /** Inline cards render in flow without the collapse bar or its overlay. */
+  readonly collapsible?: boolean;
 }
 
 /** Android cannot hit-test overlays beyond their parent's bounds; render its expanded card in-flow. */
@@ -75,6 +81,7 @@ function QuestionText(props: { readonly markdown: string; readonly environmentId
 }
 
 export function PendingUserInputCard(props: PendingUserInputCardProps) {
+  const collapsible = props.collapsible ?? true;
   const questionCount = props.pendingUserInput.questions.length;
   const canRespond = props.pendingUserInput.responseCapability !== "not_resumable";
   const isResponding = props.respondingUserInputId === props.pendingUserInput.requestId;
@@ -114,14 +121,16 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
   const overlayHeightStyle = useAnimatedStyle(() => ({ height: maxHeight.value }));
 
   // Keep the iOS card mounted so expansion starts on the UI thread without waiting for React layout.
-  const renderCard = EXPANDED_CARD_IS_OVERLAY || !props.collapsed;
-  const showBar = props.collapsed || EXPANDED_CARD_IS_OVERLAY;
+  const overlayLayout = EXPANDED_CARD_IS_OVERLAY && collapsible;
+  const renderCard = collapsible ? EXPANDED_CARD_IS_OVERLAY || !props.collapsed : true;
+  const collapsed = collapsible && props.collapsed;
+  const showBar = collapsible && (props.collapsed || EXPANDED_CARD_IS_OVERLAY);
   const bar = showBar ? (
     <View
       onLayout={handleBarLayout}
-      pointerEvents={props.collapsed ? "auto" : "none"}
-      accessibilityElementsHidden={!props.collapsed}
-      importantForAccessibility={props.collapsed ? "auto" : "no-hide-descendants"}
+      pointerEvents={collapsed ? "auto" : "none"}
+      accessibilityElementsHidden={!collapsed}
+      importantForAccessibility={collapsed ? "auto" : "no-hide-descendants"}
       className="flex-row items-center gap-2 rounded-full border border-border bg-card-alt py-1.5 pl-4 pr-1.5"
     >
       <Pressable
@@ -161,43 +170,54 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
   const card = renderCard ? (
     <Animated.View
       onLayout={handleCardLayout}
-      pointerEvents={props.collapsed ? "none" : "auto"}
-      accessibilityElementsHidden={props.collapsed}
-      importantForAccessibility={props.collapsed ? "no-hide-descendants" : "auto"}
+      pointerEvents={collapsed ? "none" : "auto"}
+      accessibilityElementsHidden={collapsed}
+      importantForAccessibility={collapsed ? "no-hide-descendants" : "auto"}
       entering={
-        EXPANDED_CARD_IS_OVERLAY
+        overlayLayout
           ? undefined
           : FadeInUp.duration(USER_INPUT_TOGGLE_DURATION_MS).easing(Easing.out(Easing.cubic))
       }
       exiting={
-        EXPANDED_CARD_IS_OVERLAY
+        overlayLayout
           ? undefined
           : FadeOutDown.duration(USER_INPUT_TOGGLE_DURATION_MS).easing(Easing.out(Easing.cubic))
       }
       className="overflow-hidden gap-2.5 rounded-[20px] border border-border bg-card-alt p-4"
-      style={EXPANDED_CARD_IS_OVERLAY ? cardAnimatedStyle : cardMaxHeightStyle}
+      style={overlayLayout ? cardAnimatedStyle : cardMaxHeightStyle}
     >
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Collapse user input"
-        onPress={props.onToggleCollapsed}
-        className="flex-row items-start gap-2"
-      >
+      {collapsible ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Collapse user input"
+          onPress={props.onToggleCollapsed}
+          className="flex-row items-start gap-2"
+        >
+          <View className="flex-1 gap-2.5">
+            <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-foreground-secondary">
+              User input needed
+            </Text>
+            <Text className="font-t3-bold text-lg text-foreground">
+              Fill in the pending answers
+            </Text>
+          </View>
+          <View className="h-8 w-8 items-center justify-center rounded-full bg-subtle-strong">
+            <SymbolView
+              name="chevron.down"
+              size={13}
+              tintColorClassName={"accent-icon-subtle"}
+              type="monochrome"
+            />
+          </View>
+        </Pressable>
+      ) : (
         <View className="flex-1 gap-2.5">
           <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-foreground-secondary">
             User input needed
           </Text>
           <Text className="font-t3-bold text-lg text-foreground">Fill in the pending answers</Text>
         </View>
-        <View className="h-8 w-8 items-center justify-center rounded-full bg-subtle-strong">
-          <SymbolView
-            name="chevron.down"
-            size={13}
-            tintColorClassName={"accent-icon-subtle"}
-            type="monochrome"
-          />
-        </View>
-      </Pressable>
+      )}
       <ScrollView
         bounces={false}
         className="min-h-0"
@@ -276,6 +296,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                     props.onChangeCustomAnswer(props.pendingUserInput.requestId, question.id, value)
                   }
                   onInputFocusChange={props.onInputFocusChange}
+                  threadTarget={props.threadTarget}
                 />
               ) : null}
             </View>
@@ -307,7 +328,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
   return (
     <View className="relative">
       {bar}
-      {EXPANDED_CARD_IS_OVERLAY ? (
+      {overlayLayout ? (
         <Animated.View
           pointerEvents={props.collapsed ? "none" : "box-none"}
           className="absolute inset-x-0 bottom-0 justify-end overflow-hidden"

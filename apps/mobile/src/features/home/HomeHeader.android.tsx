@@ -1,5 +1,7 @@
 import type { MenuAction } from "@react-native-menu/menu";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
+import { AndroidHeaderIconButton } from "../../components/ui/AndroidScreenHeader";
+import { useOpenLeadSheet } from "../lead/useOpenLeadSheet";
 import { ThreadListToolbar } from "./ThreadListToolbar";
 import type { HomeHeaderProps } from "./HomeHeader.types";
 
@@ -10,6 +12,7 @@ function checkedMenuState(checked: boolean) {
 }
 
 export function HomeHeader(props: HomeHeaderProps) {
+  const openLeadSheet = useOpenLeadSheet();
   const hasCustomListOptions =
     props.selectedEnvironmentId !== null || props.selectedProjectKey !== null;
   const menuActions: MenuAction[] = [
@@ -92,6 +95,15 @@ export function HomeHeader(props: HomeHeaderProps) {
         filterCustomized={hasCustomListOptions}
         onFilterAction={handleMenuAction}
         onOpenEnvironments={props.onOpenEnvironments}
+        leadAction={
+          openLeadSheet.available ? (
+            <AndroidHeaderIconButton
+              accessibilityLabel="Lead"
+              icon="circle.inset.filled"
+              onPress={() => openLeadSheet.open()}
+            />
+          ) : undefined
+        }
       />
     </>
   );

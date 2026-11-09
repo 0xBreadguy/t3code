@@ -1,5 +1,6 @@
 import { useWorkspaceSidebarHeaderItem } from "../layout/useWorkspaceSidebarHeaderItem";
 import { StackActions, useNavigation } from "@react-navigation/native";
+import { useOpenLeadSheet } from "../lead/useOpenLeadSheet";
 import { threadHeaderAppearance } from "./thread-header-appearance";
 import { isDuoDevice } from "../../lib/device-type";
 import type { AppNativeStackNavigationOptions } from "../../native/StackHeader";
@@ -30,8 +31,27 @@ export function useThreadHeaderOptions(props: {
   const navigation = useNavigation();
   const { layout, startNewTask } = useAdaptiveWorkspaceLayout();
   const sidebarHeaderItem = useWorkspaceSidebarHeaderItem();
+  const openLeadSheet = useOpenLeadSheet();
+  const { environmentId, threadId } = props.gitControls;
+  const canOpenLead =
+    openLeadSheet.available &&
+    String(environmentId).length > 0 &&
+    String(threadId).length > 0 &&
+    props.draft !== true;
+  // The lead is summoned from the worker it is asked about, not from a tab.
+  const leadHeaderItem = withNativeGlassHeaderItem({
+    accessibilityLabel: "Lead",
+    icon: { name: "circle.inset.filled", type: "sfSymbol" as const },
+    identifier: "thread-right-lead",
+    label: "Lead",
+    onPress: () => openLeadSheet.open({ environmentId, threadId }),
+    type: "button" as const,
+  });
   const threadCenterHeaderItems = useThreadGitCenterHeaderItems(props.gitControls);
-  const compactRightHeaderItems = useThreadGitRightHeaderItems(props.gitControls);
+  const compactRightHeaderItems = [
+    ...(canOpenLead ? [leadHeaderItem] : []),
+    ...useThreadGitRightHeaderItems(props.gitControls),
+  ];
   const splitLeftHeaderItems: NativeHeaderItems = [
     ...(!usesDuoHeader
       ? [
@@ -89,12 +109,14 @@ export function useThreadHeaderOptions(props: {
         : () => compactHomeHeaderItems,
     // The workspace navigator adds compose to the Duo detail column's bar.
     unstable_headerRightItems: () =>
-      usesDuoHeader || layout.usesSplitView ? threadCenterHeaderItems : compactRightHeaderItems,
+      usesDuoHeader || layout.usesSplitView
+        ? [...threadCenterHeaderItems, ...(canOpenLead ? [leadHeaderItem] : [])]
+        : compactRightHeaderItems,
     unstable_headerToolbarItems: () => [],
     unstable_headerSubtitle: props.usesNativeHeaderGlass ? props.subtitle : undefined,
     contentStyle: undefined,
   };
-  const { environmentId, threadId, gitStatus } = props.gitControls;
+  const { gitStatus } = props.gitControls;
   return {
     options,
     // Factories re-read only on version changes; include displayed items and hidden callback state such as default refs.
@@ -103,6 +125,7 @@ export function useThreadHeaderOptions(props: {
       threadCenterHeaderItems,
       compactRightHeaderItems,
       usesDuoHeader,
+      canOpenLead,
       environmentId,
       threadId,
       gitStatus?.isDefaultRef,

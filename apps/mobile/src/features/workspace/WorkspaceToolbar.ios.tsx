@@ -18,6 +18,7 @@ import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 import { useFloatingWorkspaceTabs, useSidebarWorkspaceTabs } from "./useSystemWorkspaceTabBar";
 import { WorkspaceTabToolbarButtons } from "./WorkspaceSectionToolbar";
+import { useOpenLeadSheet } from "../lead/useOpenLeadSheet";
 
 const SEARCH_LABELS = {
   threads: "Search threads",
@@ -31,6 +32,7 @@ export function WorkspaceToolbar(props: {
 }) {
   const workspace = useWorkspaceTabs()!;
   const activeNewTask = useActiveNewTask();
+  const openLeadSheet = useOpenLeadSheet();
   const deviceType = useDeviceType();
   const sidebarTabs = useSidebarWorkspaceTabs();
   const floatingTabs = useFloatingWorkspaceTabs();
@@ -186,6 +188,13 @@ export function WorkspaceToolbar(props: {
         <Toolbar placement="right">
           {searchButton}
           {nativeToolbarCompose && foldedSearch ? <Toolbar.Spacer width={8} /> : null}
+          {openLeadSheet.available && selectedTab === "threads" && !workspace.settingsOpen ? (
+            <Toolbar.Button
+              accessibilityLabel="Lead"
+              icon="circle.inset.filled"
+              onPress={() => openLeadSheet.open()}
+            />
+          ) : null}
           {composeButton}
           {selectedTab !== "threads" ||
           isDuoDevice(deviceType) ||
