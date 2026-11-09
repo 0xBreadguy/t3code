@@ -7,6 +7,7 @@ import {
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -1218,6 +1219,7 @@ describe("environment shell cold start", () => {
       Effect.provideService(ShellSnapshotLoader.ShellSnapshotLoader, snapshotLoader),
     );
     return {
+      state: shellState,
       subscriptions,
       saved,
       httpLoads,
@@ -1281,6 +1283,58 @@ describe("environment shell cold start", () => {
           origin: { ...CURRENT_ORIGIN, snapshotAt: NOW },
         });
       }
+    }),
+  );
+
+  it.effect("keeps syncing row status after a shell stream defect", () =>
+    Effect.gen(function* () {
+      const h = yield* makeColdStart(RECENT_ORIGIN);
+      const rowUpdate = (sequence: number, status: "completed" | "running") => ({
+        kind: "thread.updated" as const,
+        sequence,
+        location: "active" as const,
+        thread: { ...v2ThreadShell, status },
+      });
+      const liveRow = (sequence: number, status: "completed" | "running") =>
+        SubscriptionRef.changes(h.state).pipe(
+          Stream.filter(
+            (state) =>
+              state.status === "live" &&
+              Option.exists(
+                state.snapshot,
+                (snapshot) =>
+                  snapshot.snapshotSequence === sequence &&
+                  snapshot.threads.some(
+                    (thread) => thread.id === v2ThreadShell.id && thread.status === status,
+                  ),
+              ),
+          ),
+          Stream.runHead,
+          Effect.map(Option.getOrThrow),
+        );
+
+      const first = yield* Queue.take(h.subscriptions);
+      yield* Queue.offerAll(first.events, [
+        rowUpdate(CACHED_SEQUENCE + 1, "completed"),
+        { kind: "synchronized" },
+      ]);
+      yield* liveRow(CACHED_SEQUENCE + 1, "completed");
+
+      yield* Queue.failCause(first.events, Cause.die(new Error("shell invariant failed")));
+      // Let the defect settle before the next session arrives, as it does on a real device.
+      yield* TestClock.adjust("1 second");
+      expect((yield* SubscriptionRef.get(h.state)).error).toEqual(
+        Option.some("Could not synchronize environment data."),
+      );
+
+      yield* h.reconnect;
+      const resumed = yield* Queue.take(h.subscriptions);
+      expect(resumed.input).toMatchObject({ afterSequence: CACHED_SEQUENCE + 1 });
+      yield* Queue.offerAll(resumed.events, [
+        rowUpdate(CACHED_SEQUENCE + 2, "running"),
+        { kind: "synchronized" },
+      ]);
+      expect((yield* liveRow(CACHED_SEQUENCE + 2, "running")).error).toEqual(Option.none());
     }),
   );
 
