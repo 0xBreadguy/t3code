@@ -27,6 +27,7 @@ import { Input } from "../ui/input";
 import { RadioGroup } from "../ui/radio-group";
 import { Spinner } from "../ui/spinner";
 import { StandalonePage, StandalonePageHeader } from "../ui/standalone-page";
+import { markTipDone } from "~/tips/tipsStorage";
 
 export const accessConfig: Record<
   AuthMcpClientAccess,
@@ -134,6 +135,9 @@ export function ConnectAgentSurface() {
       client.mcpOAuth.decision({ payload: { authorization, decision } }),
     );
     if (answer.kind === "redirect") {
+      // Only seen when this page shares storage with the app, such as on web. The approving
+      // server is unknown here, so the use stays local and is never reported.
+      if (choice === "approve") markTipDone("mcp-apps", { unreported: true });
       window.location.replace(answer.url);
       return;
     }

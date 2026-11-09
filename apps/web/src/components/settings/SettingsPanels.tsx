@@ -73,6 +73,7 @@ import { useTextGenerationTargets } from "../../textGenerators";
 import { ensureLocalApi, readLocalApi } from "../../localApi";
 import { isMacPlatform } from "../../lib/utils";
 import {
+  readPrimaryEnvironmentId,
   useEnvironmentProviders,
   useEnvironments,
   usePrimaryEnvironmentId,
@@ -114,6 +115,8 @@ import { canUpdateServer } from "../ServerUpdateAction";
 import { useUpdateEverythingRun } from "../sidebar/updateEverythingRun";
 import { awaitsTrackSwitch, channelSwitchLabel } from "../sidebar/updateEverything.logic";
 import { isHostedByThisApp } from "../sidebar/useUpdateEverything";
+import { persistClientSettingsUpdate } from "~/hooks/useSettings";
+import { recordTipEvent, tipEventEnvironmentId } from "~/tips/tipsStore";
 
 const RESPONSE_STREAMING_MODE_LABELS: Record<ResponseStreamingMode, string> = {
   turn: "Wait for the full response",
@@ -508,6 +511,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ? ["Snooze options"]
       : []),
     ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? ["Word wrap"] : []),
+    ...(settings.newThreadTipsEnabled !== DEFAULT_UNIFIED_SETTINGS.newThreadTipsEnabled
+      ? ["Tips on new threads"]
+      : []),
     ...(settings.persistComposerContextStrip !==
     DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip
       ? ["Composer context"]
@@ -631,6 +637,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       notifyThemeRestoreFailure();
       return;
     }
+    const tipsTurnedOn = !settings.newThreadTipsEnabled;
     updateSettings({
       appearanceContrast: DEFAULT_UNIFIED_SETTINGS.appearanceContrast,
       diffColorScheme: DEFAULT_UNIFIED_SETTINGS.diffColorScheme,
@@ -701,6 +708,14 @@ export function useSettingsRestore(onRestored?: () => void) {
       pullRequestLinksOpenInApp: DEFAULT_UNIFIED_SETTINGS.pullRequestLinksOpenInApp,
       enableAgentBrowserAccess: DEFAULT_UNIFIED_SETTINGS.enableAgentBrowserAccess,
     });
+    // This write alone restores tips, so the event follows the save, like the Tips switch.
+    if (tipsTurnedOn) {
+      void persistClientSettingsUpdate((current) => ({ ...current, newThreadTipsEnabled: true }))
+        .then(() =>
+          recordTipEvent(tipEventEnvironmentId([readPrimaryEnvironmentId()]), { event: "enabled" }),
+        )
+        .catch(() => undefined);
+    }
     onRestored?.();
   };
 

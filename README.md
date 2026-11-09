@@ -107,6 +107,7 @@ Full docs live in [docs/](./docs). There's no docs site yet.
 
 - [FAQ](./docs/user/faq.md)
 - [Install and first run](./docs/user/install.md)
+- [Tips](./docs/user/tips.md)
 - [Permission modes](./docs/user/permission-modes.md)
 - [Keyboard shortcuts](./docs/user/keybindings.md)
 - [Project settings](./docs/user/project-settings.md)
