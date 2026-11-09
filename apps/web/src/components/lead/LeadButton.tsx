@@ -5,6 +5,7 @@ import { deriveLeadButtonStatus } from "@t3tools/client-runtime/lead/status";
 import { CircleDotIcon, ShieldCheckIcon, WifiOffIcon } from "lucide-react";
 
 import { useLeadBackend } from "../../rpc/lead";
+import { useStableCallback } from "../../hooks/useStableCallback";
 import { primaryServerKeybindingsAtom } from "../../state/server";
 import { useEnvironments } from "../../state/environments";
 import { useProject } from "../../state/entities";
@@ -46,6 +47,9 @@ export function LeadButton({ className }: { readonly className?: string }) {
   );
   const session = useLeadSession(scope);
   const environment = useLeadEnvironment(scope);
+  const rememberAnchor = useStableCallback((element: HTMLElement | null) => {
+    setAnchorElement(element);
+  });
   const ownership = session.data?.state?.ownership ?? null;
   const grantActive = ownership !== null && ownership.revokedAt === null;
   const pendingHandoffs = session.data?.pendingHandoffCount ?? 0;
@@ -88,9 +92,7 @@ export function LeadButton({ className }: { readonly className?: string }) {
           aria-keyshortcuts="Meta+I Control+I"
           data-lead-button=""
           onPressedChange={() => toggleLead()}
-          ref={(element) => {
-            setAnchorElement(element);
-          }}
+          ref={rememberAnchor}
           className="[-webkit-app-region:no-drag]"
         >
           <span className="flex items-center gap-1.5">
