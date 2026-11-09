@@ -304,6 +304,99 @@ it("readThread pages cut-off text without splitting an emoji across pages", asyn
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
 
+it("readThread keeps an activity page within an MCP client's output limit and pages the rest", async () => {
+  const projection = {
+    thread: baseThread({
+      threadId: parentThreadId,
+      title: "Parent",
+      instanceId: parentInstanceId,
+      model: "gpt-5.4",
+    }),
+    runs: [makeRun({ id: activeRunId, ordinal: 1, status: "running" })],
+    visibleTurnItems: [],
+    providerTurns: [],
+    runtimeRequests: [],
+    messages: [],
+    contextTransfers: [],
+    subagents: [],
+    updatedAt: now,
+  } as unknown as OrchestrationV2ThreadProjection;
+  const rows = Array.from({ length: 60 }, (_, position) => ({
+    position,
+    visibility: "visible",
+    sourceThreadId: parentThreadId,
+    sourceItemId: TurnItemId.make(`turn-item-mcp-reasoning-${position}`),
+    item: {
+      type: "reasoning",
+      runId: activeRunId,
+      status: "completed",
+      title: null,
+      text: `${position} `.padEnd(3_000, "x"),
+      updatedAt: now,
+    },
+  }));
+
+  const layer = layerOrchestratorService.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getTimelinePage: (_threadId, options) => {
+            const after = rows.filter((row) => row.position > options.afterPosition);
+            return Effect.succeed({
+              items: after.slice(
+                0,
+                options.limit,
+              ) as unknown as OrchestrationV2ThreadProjection["visibleTurnItems"],
+              totalItems: rows.length,
+              hasMore: after.length > options.limit,
+            });
+          },
+          getThreadRecords: () => Effect.succeed(projection),
+          getProjectThreadRecords: () => Effect.succeed(projection),
+          getThreadShell: () =>
+            Effect.succeed(projection.thread as unknown as OrchestrationV2ThreadShell),
+        } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
+        ServerSettings.layerTest(),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed([]),
+        } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+          list: () => Effect.succeed({ tasks: [] }),
+        } satisfies Partial<ScheduledTaskService.ScheduledTaskService["Service"]>),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+          list: () => Effect.succeed([]),
+        } satisfies Partial<ProviderAdapterRegistry.ProviderAdapterRegistryV2["Service"]>),
+        NodeCrypto.layer,
+      ),
+    ),
+  );
+
+  await Effect.gen(function* () {
+    const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+    const positions: Array<number> = [];
+    let afterPosition: number | undefined;
+    for (let page = 0; page < rows.length; page++) {
+      const result = yield* service.readThread(makeScope(), {
+        threadId: parentThreadId,
+        view: "activity",
+        limit: 100,
+        maxCharsPerItem: 1_500,
+        ...(afterPosition === undefined ? {} : { afterPosition }),
+      });
+      // Claude Code rejects MCP results over ~25k tokens, about 50k chars of this JSON.
+      expect(JSON.stringify(result).length).toBeLessThanOrEqual(50_000);
+      if (page === 0) expect(result.hasMore).toBe(true);
+      positions.push(...result.items.map((item) => item.position));
+      if (!result.hasMore) break;
+      afterPosition = result.nextPosition ?? undefined;
+    }
+    expect(positions).toEqual(rows.map((row) => row.position));
+  }).pipe(Effect.provide(layer), Effect.runPromise);
+});
+
 it("taskStatus returns task.providerInstanceId rather than the driver kind", async () => {
   const parentProjection = {
     thread: baseThread({
