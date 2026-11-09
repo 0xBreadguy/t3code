@@ -154,6 +154,23 @@ describe("appointed lead guidance", () => {
     expect(guidance).not.toContain("A secret worker summary");
   });
 
+  it("allows an explicit current reconcile request without a recorded grant", () => {
+    const guidance = leadAppointedGuidance({
+      settings,
+      projectId,
+      threadId: leadThreadId,
+      projectTitle: "Parser",
+      leadState: { revision: 1, handoffs: [handoff("aaa")], ownership: null },
+    });
+    expect(guidance).toContain("no standing grant is recorded");
+    expect(guidance).toContain("explicit current user instruction");
+    expect(guidance).toContain("combine and test on a separate branch");
+    expect(guidance).toContain(
+      "do not open a pull request or publish unless the user separately asked",
+    );
+    expect(guidance).not.toContain("Do not reconcile");
+  });
+
   it("reports a revoked grant and never treats it as authority", () => {
     const guidance = leadAppointedGuidance({
       settings,

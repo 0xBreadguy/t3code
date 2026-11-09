@@ -16,7 +16,7 @@ The lead is scoped to one environment and project. Invoking it again resumes tha
 
 ## Reports and ownership
 
-Workers may record a handoff when they finish. A report names the source thread and any commit it could resolve, and lists the checks the worker says it ran. Those checks are reports, not verified results; a normal turn ending is not a handoff. **Review pending work** sends the lead an explicit request to read the reports and recommend what to combine.
+Workers may record a handoff when they finish. A report names the source thread and any commit it could resolve, and lists the checks the worker says it ran. Those checks are reports, not verified results; a normal turn ending is not a handoff. **Review pending work** sends the lead an explicit request to read the reports and recommend what to combine. **Reconcile as recommended** is the same kind of explicit user request: the lead combines the work on a separate branch and runs checks. It needs no standing ownership grant and no extra confirmation, and it does not open a pull request or publish.
 
 The lead observes and recommends by default. **Hand over authority** is a deliberate user action with a readback; it is persisted, visible, and revocable with **Take back**. A grant covers reconcile, pull request, or merge actions, but it does not sandbox shell commands, undo earlier work, or prove that a merge happened. Provider permissions remain separate. There is no automatic background recommendation pass in this version.
 

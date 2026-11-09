@@ -25,6 +25,10 @@ const REVIEW_PENDING_TEXT =
   "which checks are only reported rather than verified, and recommend what to combine. " +
   "Don't merge or open a PR unless I hand you ownership.";
 
+const RECONCILE_TEXT =
+  "Reconcile the work handed back for this project. Combine it on a separate branch and run " +
+  "the checks. Don't open a PR or merge.";
+
 function LeadHandoffReport({
   handoff,
   environmentId,
@@ -113,6 +117,16 @@ export function LeadWork({
       });
     });
 
+  const reconcile = () =>
+    run(async () => {
+      await backend.send(scope.environmentId, {
+        projectId: scope.projectId,
+        commandId: CommandId.make(randomUUID()),
+        messageId: newMessageId(),
+        text: RECONCILE_TEXT,
+      });
+    });
+
   const grant = () =>
     run(async () => {
       if (actions.length === 0) return;
@@ -140,21 +154,31 @@ export function LeadWork({
   return (
     <div className="space-y-2 border-b border-border/70 px-3 py-2" data-lead-work="">
       {pendingHandoffs > 0 ? (
-        <div className="flex items-center justify-between gap-2 rounded-md border border-border/70 px-2 py-1.5">
-          <span className="text-xs text-muted-foreground">
-            {pendingHandoffs === 1
-              ? "1 worker handed work back"
-              : `${pendingHandoffs} workers handed work back`}
-          </span>
-          <Button
-            size="xs"
-            variant="outline"
-            disabled={disabled}
-            onClick={() => void reviewPending()}
-          >
-            Review pending work
-          </Button>
-        </div>
+        <>
+          <div className="flex items-center justify-between gap-2 rounded-md border border-border/70 px-2 py-1.5">
+            <span className="text-xs text-muted-foreground">
+              {pendingHandoffs === 1
+                ? "1 worker handed work back"
+                : `${pendingHandoffs} workers handed work back`}
+            </span>
+            <div className="flex flex-wrap justify-end gap-1.5">
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={disabled}
+                onClick={() => void reviewPending()}
+              >
+                Review pending work
+              </Button>
+              <Button size="xs" disabled={disabled} onClick={() => void reconcile()}>
+                Reconcile as recommended
+              </Button>
+            </div>
+          </div>
+          <p className="text-3xs text-muted-foreground">
+            Reconcile combines on a separate branch and runs checks. It won't open a PR.
+          </p>
+        </>
       ) : null}
 
       {data?.state?.handoffs.slice(-3).map((handoff) => (
