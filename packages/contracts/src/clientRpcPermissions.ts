@@ -10,6 +10,7 @@ import {
   AuthTerminalOperateScope,
   type AuthEnvironmentScope,
 } from "./auth.ts";
+import { LEAD_WS_METHODS } from "./lead.ts";
 import { ORCHESTRATION_V2_WS_METHODS } from "./orchestrationV2.ts";
 import { WS_METHODS } from "./rpc.ts";
 
@@ -59,6 +60,16 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.scheduledTasksDelete]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksRunNow]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksRotateWebhookToken]: AuthOrchestrationOperateScope,
+  // Leading a project starts and steers its ordinary thread, so it needs operate.
+  [LEAD_WS_METHODS.ensure]: AuthOrchestrationOperateScope,
+  [LEAD_WS_METHODS.send]: AuthOrchestrationOperateScope,
+  // Reading the binding and bounded handoffs is ordinary orchestration read.
+  [LEAD_WS_METHODS.read]: AuthOrchestrationReadScope,
+  // Configuration grants worker finishing policy and role models, which write settings.
+  [LEAD_WS_METHODS.configure]: AuthSettingsWriteScope,
+  // Only a user-facing operation may mint or revoke authority.
+  [LEAD_WS_METHODS.grant]: AuthSettingsWriteScope,
+  [LEAD_WS_METHODS.revoke]: AuthSettingsWriteScope,
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: AuthOrchestrationOperateScope,
   // Force stop kills agent processes, as Stop on a terminal does.
   [ORCHESTRATION_V2_WS_METHODS.forceStopThread]: AuthOrchestrationOperateScope,

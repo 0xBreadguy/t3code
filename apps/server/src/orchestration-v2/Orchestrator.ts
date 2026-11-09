@@ -57,6 +57,7 @@ import {
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
   latestProviderTurnForAttempt,
+  leadStateRevisionProblem,
   parseGoalCommand,
   orchestrationV2RunWorkStartedAt,
   ProviderInstanceId,
@@ -3047,6 +3048,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Thread ${command.threadId} is no longer empty.`,
         });
     }
+    if (command.type === "thread.metadata.update" && command.leadState !== undefined) {
+      const problem = leadStateRevisionProblem({
+        currentRevision: thread.leadState?.revision,
+        expectedRevision: command.expectedLeadRevision,
+        nextRevision: command.leadState?.revision,
+      });
+      if (problem !== null) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} lead state revision rejected: ${problem}.`,
+        });
+      }
+    }
     if (command.type === "thread.archive" && thread.archivedAt !== null) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
@@ -3489,7 +3504,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     snooze: command.limitRecovery.snooze ?? previousRecovery?.snooze ?? false,
                     requestId: command.commandId,
                   };
-          return {
+          const updatedThread: OrchestrationV2AppThread = {
             ...thread,
             ...(command.title === undefined ? {} : { title: command.title }),
             ...(command.limitRecovery === undefined ? {} : { limitRecovery }),
@@ -3544,6 +3559,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 : {}),
             updatedAt: now,
           };
+          if (command.leadState === undefined) return updatedThread;
+          if (command.leadState === null) {
+            const { leadState: _cleared, ...withoutLeadState } = updatedThread;
+            return withoutLeadState;
+          }
+          return { ...updatedThread, leadState: command.leadState };
         }
         case "thread.pull-request.link":
         case "thread.pull-request.unlink":

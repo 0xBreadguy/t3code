@@ -1522,3 +1522,75 @@ it.effect("dispatch records the command outcome and its duration", () =>
     assert.strictEqual((yield* durations).count - durationsBefore, 1);
   }).pipe(Effect.provide(layerTest)),
 );
+
+it.effect("compare-and-swaps lead state and rejects a stale revision", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:lead-state");
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-lead-state"),
+      threadId,
+      projectId: ProjectId.make("project:lead-state"),
+      title: "Lead",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+
+    const handoff = {
+      id: "handoff:run:head",
+      sourceThreadId: ThreadId.make("thread:worker"),
+      sourceRunId: RunId.make("run:worker"),
+      head: "abc123",
+      headSource: "resolved" as const,
+      summary: "Focused tests passed.",
+      checks: [{ name: "vp test run lead", outcome: "passed" as const }],
+      reviewStatus: "review_required" as const,
+      status: "reported" as const,
+      createdAt: "2026-11-08T00:00:00.000Z",
+    };
+    const first = yield* Effect.result(
+      orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("lead-state-first"),
+        threadId,
+        expectedLeadRevision: 0,
+        leadState: { revision: 1, handoffs: [handoff], ownership: null },
+      }),
+    );
+    assert.isTrue(Result.isSuccess(first));
+
+    const stored = yield* projections.getThread(threadId);
+    assert.strictEqual(stored.leadState?.revision, 1);
+    assert.strictEqual(stored.leadState?.handoffs[0]?.reviewStatus, "review_required");
+
+    const stale = yield* Effect.result(
+      orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("lead-state-stale"),
+        threadId,
+        expectedLeadRevision: 0,
+        leadState: { revision: 2, handoffs: [handoff], ownership: null },
+      }),
+    );
+    assert.isTrue(Result.isFailure(stale));
+
+    const cleared = yield* Effect.result(
+      orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("lead-state-clear"),
+        threadId,
+        expectedLeadRevision: 1,
+        leadState: null,
+      }),
+    );
+    assert.isTrue(Result.isSuccess(cleared));
+    assert.isUndefined((yield* projections.getThread(threadId)).leadState);
+  }).pipe(Effect.provide(layerTest)),
+);

@@ -1,5 +1,7 @@
 import type { ModelPreferences } from "@t3tools/contracts/settings";
 import {
+  type AgentRoleModelSelectionPatch,
+  type AgentRoleModelSelections,
   DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_TEXT_GENERATION_MODEL,
   DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
@@ -13,6 +15,8 @@ import {
   isProviderTextGenerationCapable,
   type ModelSelection,
   type ProjectId,
+  type ProjectLeadConfig,
+  type ProjectLeadConfigPatch,
   type ProjectScopedServerSettingKey,
   ProjectSettingsOverrides,
   ProviderDriverKind,
@@ -260,6 +264,77 @@ function mergeProjectSettingsOverridesPatch(
   return Object.fromEntries(next);
 }
 
+function mergeAgentRoleModelsPatch(
+  current: AgentRoleModelSelections,
+  patch: AgentRoleModelSelectionPatch,
+): AgentRoleModelSelections {
+  const next: Record<string, unknown> = { ...current };
+  for (const [role, selection] of Object.entries(patch)) {
+    if (selection === null) {
+      delete next[role];
+    } else if (selection !== undefined) {
+      next[role] = selection;
+    }
+  }
+  return next as AgentRoleModelSelections;
+}
+
+function mergeProjectAgentRoleModels(
+  current: Readonly<Record<string, ProjectSettingsOverrides>>,
+  patch: Readonly<Record<string, AgentRoleModelSelectionPatch | null>>,
+): Record<string, ProjectSettingsOverrides> {
+  const next = new Map(Object.entries(current));
+  for (const [projectId, rolePatch] of Object.entries(patch)) {
+    if (rolePatch === null) {
+      const entry = next.get(projectId);
+      if (entry === undefined) continue;
+      const withoutRoles = Object.fromEntries(
+        Object.entries(entry).filter(([key]) => key !== "agentRoleModels"),
+      );
+      if (Object.keys(withoutRoles).length === 0) next.delete(projectId);
+      else next.set(projectId, withoutRoles as ProjectSettingsOverrides);
+      continue;
+    }
+    const entry = next.get(projectId) ?? {};
+    next.set(projectId, {
+      ...entry,
+      agentRoleModels: mergeAgentRoleModelsPatch(entry.agentRoleModels ?? {}, rolePatch),
+    });
+  }
+  return Object.fromEntries(next);
+}
+
+function mergeProjectLeadConfigsPatch(
+  current: Readonly<Record<string, ProjectLeadConfig>>,
+  patch: Readonly<Record<string, ProjectLeadConfigPatch | null>>,
+): Record<string, ProjectLeadConfig> {
+  const next = new Map(Object.entries(current));
+  for (const [projectId, configPatch] of Object.entries(patch)) {
+    if (configPatch === null || configPatch.threadId === null) {
+      next.delete(projectId);
+      continue;
+    }
+    const stored = next.get(projectId);
+    const threadId = configPatch.threadId ?? stored?.threadId;
+    if (threadId === undefined) continue;
+    const workerFinishOverrides: Record<string, ProjectLeadConfig["workerDefault"]> = {
+      ...stored?.workerFinishOverrides,
+    };
+    if (configPatch.workerFinishOverrides !== undefined) {
+      for (const [workerThreadId, mode] of Object.entries(configPatch.workerFinishOverrides)) {
+        if (mode === null) delete workerFinishOverrides[workerThreadId];
+        else workerFinishOverrides[workerThreadId] = mode;
+      }
+    }
+    next.set(projectId, {
+      threadId,
+      workerDefault: configPatch.workerDefault ?? stored?.workerDefault ?? "handoff",
+      workerFinishOverrides,
+    } as ProjectLeadConfig);
+  }
+  return Object.fromEntries(next);
+}
+
 export function deriveLegacyProjectOverrides(
   settings: Pick<ServerSettings, "projectSettingsOverrides">,
 ): Pick<
@@ -375,6 +450,10 @@ export function applyServerSettingsPatch(
     usageModelAliases: usageModelAliasesPatch,
     // Entry replacement: deepMerge would keep keys the client meant to clear.
     projectSettingsOverrides: projectSettingsOverridesPatch,
+    // Merged per role/project under the settings write lock, so one role write cannot erase another.
+    agentRoleModels: agentRoleModelsPatch,
+    projectAgentRoleModels: projectAgentRoleModelsPatch,
+    projectLeadConfigs: projectLeadConfigsPatch,
     projectAgentBrowserAccessOverrides: _legacyBrowserAccess,
     projectAutoPullOverrides: _legacyAutoPull,
     projectScriptOverrides: _legacyScripts,
@@ -468,6 +547,21 @@ export function applyServerSettingsPatch(
     };
   }
   const next = deepMerge(current, patchForMerge);
+  const projectOverridesAfterEntryPatch =
+    projectSettingsOverridesPatch === undefined
+      ? current.projectSettingsOverrides
+      : Object.fromEntries(
+          Object.entries(
+            mergeProjectSettingsOverridesPatch(
+              current.projectSettingsOverrides,
+              projectSettingsOverridesPatch,
+            ),
+          ).filter(([, entry]) => Object.keys(entry).length > 0),
+        );
+  const nextProjectSettingsOverrides =
+    projectAgentRoleModelsPatch === undefined
+      ? projectOverridesAfterEntryPatch
+      : mergeProjectAgentRoleModels(projectOverridesAfterEntryPatch, projectAgentRoleModelsPatch);
   const nextWithReplacementsBase = {
     ...next,
     favorites,
@@ -538,15 +632,19 @@ export function applyServerSettingsPatch(
           },
         }
       : {}),
-    ...(projectSettingsOverridesPatch !== undefined
+    ...(projectSettingsOverridesPatch !== undefined || projectAgentRoleModelsPatch !== undefined
+      ? { projectSettingsOverrides: nextProjectSettingsOverrides }
+      : {}),
+    ...(agentRoleModelsPatch !== undefined
       ? {
-          projectSettingsOverrides: Object.fromEntries(
-            Object.entries(
-              mergeProjectSettingsOverridesPatch(
-                current.projectSettingsOverrides,
-                projectSettingsOverridesPatch,
-              ),
-            ).filter(([, entry]) => Object.keys(entry).length > 0),
+          agentRoleModels: mergeAgentRoleModelsPatch(current.agentRoleModels, agentRoleModelsPatch),
+        }
+      : {}),
+    ...(projectLeadConfigsPatch !== undefined
+      ? {
+          projectLeadConfigs: mergeProjectLeadConfigsPatch(
+            current.projectLeadConfigs,
+            projectLeadConfigsPatch,
           ),
         }
       : {}),

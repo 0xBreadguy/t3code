@@ -9,6 +9,10 @@ import {
   OrchestratorMcpEnvironmentUnlinkResult,
   OrchestratorMcpCreateThreadsInput,
   OrchestratorMcpCreateThreadsResult,
+  LeadHandoffInput,
+  LeadHandoffResult,
+  LeadStatusInput,
+  LeadStatusResult,
   OrchestratorMcpDelegateTaskInput,
   OrchestratorMcpDelegateTaskResult,
   OrchestratorMcpDeleteScheduledTaskInput,
@@ -95,6 +99,33 @@ const DelegateTaskTool = Tool.make("delegate_task", {
   .annotate(Tool.Title, "Delegate a child task")
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
+
+const LeadHandoffTool = Tool.make("lead_handoff", {
+  description:
+    "Record finished work for this project's lead. Defaults to this thread and its latest run. Summary and check outcomes are reported, not verified; ending a turn is not a handoff. Leaves your branch alone.",
+  parameters: LeadHandoffInput,
+  success: LeadHandoffResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Record a lead handoff")
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
+const LeadStatusTool = Tool.make("lead_status", {
+  description:
+    "Read this project's lead binding and pending handoffs. A handoff is reported work, not a verified pass. Use before reviewing pending work.",
+  parameters: LeadStatusInput,
+  success: LeadStatusResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Read lead status")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
 
 const TaskStatusTool = Tool.make("task_status", {
   description:
@@ -350,6 +381,8 @@ const EnvironmentUnlinkTool = Tool.make("t3_environment_unlink", {
 export const OrchestratorToolkit = Toolkit.make(
   OrchestratorCapabilitiesTool,
   DelegateTaskTool,
+  LeadHandoffTool,
+  LeadStatusTool,
   TaskStatusTool,
   TaskCancelTool,
   WorkflowStopTool,

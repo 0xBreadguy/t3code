@@ -7,6 +7,7 @@ import {
   SecretProviderKind,
   ServerSettings,
   ServerSettingsPatch,
+  ThreadId,
   UsageLimitSourceId,
   type ServerProvider,
 } from "@t3tools/contracts";
@@ -957,5 +958,66 @@ describe("synchronized model preferences", () => {
         setModelFavorites: [{ provider, model: "sol", favorite: false }],
       }).favorites,
     ).toEqual([{ provider: otherProvider, model: "sol" }]);
+  });
+});
+
+describe("agent role and project lead settings", () => {
+  const projectId = ProjectId.make("project-lead-settings");
+  const lead = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "opus-5" };
+  const review = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6-sol" };
+
+  it("merges one role without erasing the other roles", () => {
+    const once = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      agentRoleModels: { lead },
+    });
+    const twice = applyServerSettingsPatch(once, {
+      agentRoleModels: { review },
+    });
+    expect(twice.agentRoleModels).toEqual({ lead, review });
+    expect(
+      applyServerSettingsPatch(twice, { agentRoleModels: { lead: null } }).agentRoleModels,
+    ).toEqual({ review });
+  });
+
+  it("merges one project's roles and keeps unrelated override keys", () => {
+    const withProject = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      projectSettingsOverrides: {
+        [projectId]: { defaultAutoPull: true, agentRoleModels: { lead } },
+      },
+    });
+    const withReview = applyServerSettingsPatch(withProject, {
+      projectAgentRoleModels: { [projectId]: { review } },
+    });
+    expect(withReview.projectSettingsOverrides[projectId]).toMatchObject({
+      defaultAutoPull: true,
+      agentRoleModels: { lead, review },
+    });
+    expect(
+      applyServerSettingsPatch(withReview, {
+        projectAgentRoleModels: { [projectId]: { lead: null } },
+      }).projectSettingsOverrides[projectId]?.agentRoleModels,
+    ).toEqual({ review });
+  });
+
+  it("clears one project's lead binding without touching another", () => {
+    const bind = (id: typeof projectId) =>
+      applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+        projectLeadConfigs: {
+          [id]: { threadId: ThreadId.make(`lead:${id}`), workerDefault: "handoff" },
+        },
+      });
+    const both = applyServerSettingsPatch(bind(projectId), {
+      projectLeadConfigs: {
+        [ProjectId.make("project-other")]: {
+          threadId: ThreadId.make("lead:project-other"),
+        },
+      },
+    });
+    expect(Object.keys(both.projectLeadConfigs)).toHaveLength(2);
+    expect(
+      applyServerSettingsPatch(both, {
+        projectLeadConfigs: { [projectId]: { threadId: null } },
+      }).projectLeadConfigs,
+    ).not.toHaveProperty(projectId);
   });
 });
