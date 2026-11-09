@@ -43,7 +43,7 @@ export const useLeadUiStore = create<LeadUiState>()((set, get) => ({
     get().openLead(explicitScope);
   },
   setExpanded: (expanded) => set({ expanded }),
-  setRetainedScope: (scope) => set({ retainedScope: scope }),
+  setRetainedScope: (scope) => set({ retainedScope: scope, hostedView: "none" }),
   setAnchorElement: (element) => set({ anchorEl: element }),
   markReplyRead: (scopeKey) =>
     set((state) =>

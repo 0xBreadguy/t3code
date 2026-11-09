@@ -16,6 +16,7 @@ import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useLeadPage } from "./useLeadPage";
 import { useLeadEnvironment, useLeadSession } from "./useLeadSession";
+import { useLeadLiveState } from "./useLeadLiveState";
 import { useLeadUiStore } from "./leadUiStore";
 
 function useLeadButtonScope(): {
@@ -47,12 +48,13 @@ export function LeadButton({ className }: { readonly className?: string }) {
   );
   const session = useLeadSession(scope);
   const environment = useLeadEnvironment(scope);
+  const { state, pendingHandoffCount } = useLeadLiveState(scope, session.data, { enabled: open });
   const rememberAnchor = useStableCallback((element: HTMLElement | null) => {
     setAnchorElement(element);
   });
-  const ownership = session.data?.state?.ownership ?? null;
+  const ownership = state?.ownership ?? null;
   const grantActive = ownership !== null && ownership.revokedAt === null;
-  const pendingHandoffs = session.data?.pendingHandoffCount ?? 0;
+  const pendingHandoffs = pendingHandoffCount;
   const status = deriveLeadButtonStatus({
     connectedEnvironmentCount: environments.length,
     scopes:

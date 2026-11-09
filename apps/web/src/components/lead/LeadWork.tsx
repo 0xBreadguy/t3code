@@ -4,6 +4,7 @@ import type {
   LeadHandoff,
   LeadOwnershipAction,
   LeadReadResult,
+  LeadState,
 } from "@t3tools/client-runtime/rpc/lead";
 import type { LeadScope } from "@t3tools/client-runtime/lead/scope";
 import { useState } from "react";
@@ -23,7 +24,7 @@ const ACTION_LABELS: Record<LeadOwnershipAction, string> = {
 const REVIEW_PENDING_TEXT =
   "Review the work handed back since I last looked. Summarize what each worker reported, " +
   "which checks are only reported rather than verified, and recommend what to combine. " +
-  "Don't merge or open a PR unless I hand you ownership.";
+  "Don't merge or open a PR for this review.";
 
 const RECONCILE_TEXT =
   "Reconcile the work handed back for this project. Combine it on a separate branch and run " +
@@ -70,15 +71,21 @@ function LeadHandoffReport({
 export function LeadWork({
   scope,
   data,
+  state,
+  pendingHandoffCount,
   capabilityReason,
   canOperate,
+  canWriteSettings,
   projectLabel,
   onChanged,
 }: {
   readonly scope: LeadScope;
   readonly data: LeadReadResult | null;
+  readonly state: LeadState | null;
+  readonly pendingHandoffCount: number;
   readonly capabilityReason: string | null;
   readonly canOperate: boolean;
+  readonly canWriteSettings: boolean;
   readonly projectLabel: string;
   readonly onChanged: () => void;
 }) {
@@ -88,11 +95,13 @@ export function LeadWork({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const pendingHandoffs = data?.pendingHandoffCount ?? 0;
-  const ownership = data?.state?.ownership ?? null;
+  const pendingHandoffs = pendingHandoffCount;
+  const ownership = state?.ownership ?? null;
   const activeGrant = ownership !== null && ownership.revokedAt === null ? ownership : null;
-  const revision = data?.state?.revision ?? 0;
-  const disabled = capabilityReason !== null || !canOperate || busy;
+  const revision = state?.revision ?? 0;
+  const sendDisabled = capabilityReason !== null || !canOperate || busy;
+  const authorityDisabled = capabilityReason !== null || !canWriteSettings || busy;
+  const handoffs = state?.handoffs ?? [];
 
   const run = async (action: () => Promise<LeadAuthorityResult | void>) => {
     setBusy(true);
@@ -165,12 +174,12 @@ export function LeadWork({
               <Button
                 size="xs"
                 variant="outline"
-                disabled={disabled}
+                disabled={sendDisabled}
                 onClick={() => void reviewPending()}
               >
                 Review pending work
               </Button>
-              <Button size="xs" disabled={disabled} onClick={() => void reconcile()}>
+              <Button size="xs" disabled={sendDisabled} onClick={() => void reconcile()}>
                 Reconcile as recommended
               </Button>
             </div>
@@ -178,10 +187,15 @@ export function LeadWork({
           <p className="text-3xs text-muted-foreground">
             Reconcile combines on a separate branch and runs checks. It won't open a PR.
           </p>
+          {capabilityReason === null && !canOperate ? (
+            <p className="text-3xs text-destructive-foreground">
+              You don't have permission to message this environment.
+            </p>
+          ) : null}
         </>
       ) : null}
 
-      {data?.state?.handoffs.slice(-3).map((handoff) => (
+      {handoffs.slice(-3).map((handoff) => (
         <LeadHandoffReport key={handoff.id} handoff={handoff} environmentId={scope.environmentId} />
       ))}
 
@@ -195,9 +209,19 @@ export function LeadWork({
             It won't change what providers may run without asking. Those permissions stay as they
             are.
           </p>
-          <Button size="xs" variant="ghost" disabled={disabled} onClick={() => void takeBack()}>
+          <Button
+            size="xs"
+            variant="ghost"
+            disabled={authorityDisabled}
+            onClick={() => void takeBack()}
+          >
             Take back
           </Button>
+          {capabilityReason === null && !canWriteSettings ? (
+            <p className="text-3xs text-destructive-foreground">
+              You don't have permission to change authority on this environment.
+            </p>
+          ) : null}
         </div>
       ) : grantOpen ? (
         <div className="space-y-2 rounded-md border border-border/70 px-2 py-1.5">
@@ -220,12 +244,14 @@ export function LeadWork({
             ))}
           </div>
           <p className="text-2xs text-muted-foreground">
-            Ends when you take it back. A grant doesn't sandbox shell commands or undo earlier work.
+            A grant lets the lead act on broader or future work without asking each time. You can
+            still ask for a specific action in a message; that needs no grant. It doesn't sandbox
+            shell commands or undo earlier work.
           </p>
           <div className="flex gap-1.5">
             <Button
               size="xs"
-              disabled={disabled || actions.length === 0}
+              disabled={authorityDisabled || actions.length === 0}
               onClick={() => void grant()}
             >
               Hand over
@@ -236,9 +262,21 @@ export function LeadWork({
           </div>
         </div>
       ) : (
-        <Button size="xs" variant="ghost" disabled={disabled} onClick={() => setGrantOpen(true)}>
-          Hand over authority…
-        </Button>
+        <>
+          <Button
+            size="xs"
+            variant="ghost"
+            disabled={authorityDisabled}
+            onClick={() => setGrantOpen(true)}
+          >
+            Hand over authority…
+          </Button>
+          {capabilityReason === null && !canWriteSettings ? (
+            <p className="text-3xs text-destructive-foreground">
+              You don't have permission to change authority on this environment.
+            </p>
+          ) : null}
+        </>
       )}
 
       {error !== null ? <p className="text-2xs text-destructive-foreground">{error}</p> : null}

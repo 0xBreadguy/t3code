@@ -24,6 +24,9 @@ export function useLeadPresentation(): {
       expanded,
     };
   }
+  // A phone keeps the same bottom sheet at both heights; it never becomes a
+  // right-hand slide-over, which covered the work and its controls.
+  if (phone) return { presentation: "phoneSheet", open, expanded };
   return {
     presentation: wide ? "docked" : "slideOver",
     open,

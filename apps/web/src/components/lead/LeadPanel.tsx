@@ -8,8 +8,12 @@ import { LeadContinuityBar } from "./LeadContinuityBar";
 import { LeadConversation } from "./LeadConversation";
 import { LeadHeader } from "./LeadHeader";
 import { LeadPending } from "./LeadPending";
+import { LeadRolesView } from "./LeadRolesView";
+import { LeadSetup } from "./LeadSetup";
 import { LeadWork } from "./LeadWork";
+import { useLeadUiStore } from "./leadUiStore";
 import type { LeadPage } from "./useLeadPage";
+import { useLeadLiveState } from "./useLeadLiveState";
 import type { LeadSessionState } from "./useLeadSession";
 
 const RUNNING_STATUSES = new Set(["preparing", "queued", "starting", "running", "waiting"]);
@@ -48,6 +52,7 @@ export function LeadPanel({
   session,
   projectLabel,
   canOperate,
+  canWriteSettings,
   expanded,
   onSwitch,
   onExpand,
@@ -60,6 +65,7 @@ export function LeadPanel({
   readonly session: LeadSessionState;
   readonly projectLabel: string;
   readonly canOperate: boolean;
+  readonly canWriteSettings: boolean;
   readonly expanded: boolean;
   readonly onSwitch: (scope: LeadScope) => void;
   readonly onExpand: () => void;
@@ -70,13 +76,16 @@ export function LeadPanel({
   const project = useProject(scopeProjectRef(scope.environmentId, scope.projectId));
   const data = session.data;
   const running = useLeadRunning(scope, data);
+  const { state, pendingHandoffCount } = useLeadLiveState(scope, data);
+  const hostedView = useLeadUiStore((store) => store.hostedView);
+  const setHostedView = useLeadUiStore((store) => store.setHostedView);
   const capabilityReason =
     session.capability.kind === "unsupported"
       ? session.capability.reason
       : session.capability.kind === "offline"
         ? `${environment?.label ?? "This environment"} is offline.`
         : null;
-  const ownership = data?.state?.ownership ?? null;
+  const ownership = state?.ownership ?? null;
   const ownershipActive = ownership !== null && ownership.revokedAt === null;
   const status = leadStatusLabel({
     capabilityReason,
@@ -84,7 +93,7 @@ export function LeadPanel({
     running,
     ownershipActive,
     ownershipScope: ownership?.scope.type ?? null,
-    reportsToReview: data?.pendingHandoffCount ?? 0,
+    reportsToReview: pendingHandoffCount,
   });
   const threadRef =
     data?.thread === null || data?.thread === undefined
@@ -102,14 +111,22 @@ export function LeadPanel({
       role="dialog"
       aria-label={`${projectLabel} lead`}
       aria-modal="false"
-      className="flex min-h-0 flex-col"
+      className="flex min-h-0 flex-1 flex-col"
       data-lead-panel=""
+      onKeyDown={(event) => {
+        if (hostedView !== "roles" || event.key !== "Escape" || event.defaultPrevented) return;
+        event.preventDefault();
+        event.stopPropagation();
+        setHostedView("none");
+      }}
     >
       <LeadHeader
         scope={scope}
         projectLabel={projectLabel}
         status={status}
+        rolesOpen={hostedView === "roles"}
         expanded={expanded}
+        onRoles={() => setHostedView(hostedView === "roles" ? "none" : "roles")}
         onSwitch={onSwitch}
         onExpand={onExpand}
         onClose={onClose}
@@ -125,45 +142,71 @@ export function LeadPanel({
         </p>
       ) : null}
       <LeadContinuityBar continuity={continuity} scope={scope} onSwitch={onSwitch} />
-      {data === null && capabilityReason === null ? (
-        <p className="px-3 py-2 text-2xs text-muted-foreground">Reading this project's lead…</p>
-      ) : null}
-      <LeadPending threadRef={threadRef} />
-      <LeadWork
-        scope={scope}
-        data={data}
-        capabilityReason={capabilityReason}
-        canOperate={canOperate}
-        projectLabel={project?.title ?? projectLabel}
-        onChanged={onChanged}
-      />
-      <LeadConversation
-        threadRef={threadRef}
-        className="min-h-0 flex-1 overflow-y-auto px-3 py-2"
-        emptyCopy={
-          data === null || data.binding === null
-            ? `Ask about work in ${projectLabel}. The lead watches what workers hand back. ` +
-              "It won't merge, open PRs or change code unless you hand it ownership."
-            : data.state == null || data.state.handoffs.length === 0
-              ? "Nothing handed back yet. Workers report here when they finish."
-              : "Ask the lead what to do next."
-        }
-      />
-      {roleLine !== null ? (
-        <p className="border-t border-border/70 px-3 py-1 text-3xs text-muted-foreground">
-          {roleLine}
-        </p>
-      ) : null}
-      <LeadComposer
-        scope={scope}
-        page={page}
-        data={data}
-        capabilityReason={capabilityReason}
-        running={running}
-        projectLabel={projectLabel}
-        contextEnabled={session.capability.kind === "supported" && session.capability.contextRefs}
-        onSent={onChanged}
-      />
+      {hostedView === "roles" ? (
+        <LeadRolesView
+          scope={scope}
+          data={data}
+          environmentLabel={environment?.label ?? "this environment"}
+          onBack={() => setHostedView("none")}
+          onClose={onClose}
+        />
+      ) : (
+        <>
+          {data === null && capabilityReason === null ? (
+            <p className="px-3 py-2 text-2xs text-muted-foreground">Reading this project's lead…</p>
+          ) : null}
+          <LeadPending threadRef={threadRef} />
+          {data !== null && data.binding === null && capabilityReason === null ? (
+            <LeadSetup
+              scope={scope}
+              data={data}
+              projectLabel={project?.title ?? projectLabel}
+              canOperate={canOperate}
+              onChanged={onChanged}
+            />
+          ) : null}
+          <LeadWork
+            scope={scope}
+            data={data}
+            state={state}
+            pendingHandoffCount={pendingHandoffCount}
+            capabilityReason={capabilityReason}
+            canOperate={canOperate}
+            canWriteSettings={canWriteSettings}
+            projectLabel={project?.title ?? projectLabel}
+            onChanged={onChanged}
+          />
+          <LeadConversation
+            threadRef={threadRef}
+            className="min-h-0 flex-1 overflow-y-auto px-3 py-2"
+            emptyCopy={
+              data === null || data.binding === null
+                ? `Ask about work in ${projectLabel}. The lead observes and recommends. ` +
+                  "It acts on what you ask here; broader or unattended work needs you to hand over ownership."
+                : state === null || state.handoffs.length === 0
+                  ? "Nothing handed back yet. Workers report here when they finish."
+                  : "Ask the lead what to do next."
+            }
+          />
+          {roleLine !== null ? (
+            <p className="border-t border-border/70 px-3 py-1 text-3xs text-muted-foreground">
+              {roleLine}
+            </p>
+          ) : null}
+          <LeadComposer
+            scope={scope}
+            page={page}
+            data={data}
+            capabilityReason={capabilityReason}
+            running={running}
+            projectLabel={projectLabel}
+            contextEnabled={
+              session.capability.kind === "supported" && session.capability.contextRefs
+            }
+            onSent={onChanged}
+          />
+        </>
+      )}
     </div>
   );
 }

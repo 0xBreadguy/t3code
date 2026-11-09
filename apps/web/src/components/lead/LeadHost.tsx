@@ -1,11 +1,13 @@
 import type { LeadScope } from "@t3tools/client-runtime/lead/scope";
 import { leadScopeKey, resolveLeadOpenScope } from "@t3tools/client-runtime/lead/scope";
-import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
+import { AuthOrchestrationOperateScope, AuthSettingsWriteScope } from "@t3tools/contracts";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { useLocation } from "@tanstack/react-router";
 import { CircleDotIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { workspaceAreaProps } from "../../lib/workspaceFocus";
+import { isAppModalPage } from "../sidebar/mainAppLocation";
 import { useEnvironments } from "../../state/environments";
 import { useProject, useProjects, useQuietThreadProjection } from "../../state/entities";
 import { useEnvironmentScope } from "../../state/session";
@@ -96,6 +98,9 @@ export function LeadHost() {
   const markReplyRead = useLeadUiStore((state) => state.markReplyRead);
   const markReplyUnread = useLeadUiStore((state) => state.markReplyUnread);
   const anchorEl = useLeadUiStore((state) => state.anchorEl);
+  const hostedView = useLeadUiStore((state) => state.hostedView);
+  const setHostedView = useLeadUiStore((state) => state.setHostedView);
+  const pathname = useLocation({ select: (location) => location.pathname });
   const resolved = resolveLeadOpenScope({ retained: retainedScope, page: page.scope });
   const scope = resolved.scope;
   const project = useProject(
@@ -106,7 +111,12 @@ export function LeadHost() {
     scope?.environmentId ?? null,
     AuthOrchestrationOperateScope,
   );
+  const scopeCanWriteSettings = useEnvironmentScope(
+    scope?.environmentId ?? null,
+    AuthSettingsWriteScope,
+  );
   const canOperate = scope !== null && scopeCanOperate;
+  const canWriteSettings = scope !== null && scopeCanWriteSettings;
   const leadThread = session.data?.thread ?? null;
   const bindingRef =
     scope === null || leadThread === null
@@ -160,6 +170,11 @@ export function LeadHost() {
     if (open && scope !== null) markReplyRead(leadScopeKey(scope));
   }, [markReplyRead, open, scope]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Settings and Usage are modals over the work; the lead must not sit above them
+  useEffect(() => {
+    if (open && isAppModalPage(pathname)) closeLead();
+  }, [closeLead, open, pathname]);
+
   if (!open) return null;
 
   if (scope === null) {
@@ -203,6 +218,7 @@ export function LeadHost() {
       session={session}
       projectLabel={projectLabel}
       canOperate={canOperate}
+      canWriteSettings={canWriteSettings}
       expanded={expanded}
       onSwitch={(next) => setRetainedScope(next)}
       onExpand={() => setExpanded(!expanded)}
@@ -220,7 +236,8 @@ export function LeadHost() {
         onKeyDown={(event) => {
           if (event.key === "Escape" && !event.defaultPrevented) {
             event.preventDefault();
-            closeLead();
+            if (hostedView === "roles") setHostedView("none");
+            else closeLead();
           }
         }}
       >
@@ -229,17 +246,28 @@ export function LeadHost() {
     );
   }
 
-  if (presentation === "slideOver" || presentation === "phoneSheet") {
-    const phone = presentation === "phoneSheet";
+  if (presentation === "phoneSheet") {
     return (
       <Sheet open onOpenChange={(next) => !next && closeLead()}>
         <SheetPopup
-          side={phone ? "bottom" : "right"}
+          side="bottom"
           showCloseButton={false}
           className={
-            phone ? "h-[calc(100dvh-3rem)] max-h-[calc(100dvh-3rem)]" : "w-[25rem] max-w-[100vw]"
+            expanded
+              ? "h-[calc(100dvh-3rem)] max-h-[calc(100dvh-3rem)] overflow-hidden"
+              : "max-h-[70dvh] overflow-hidden"
           }
         >
+          <div className="flex max-h-[inherit] min-h-0 flex-1 flex-col">{panel}</div>
+        </SheetPopup>
+      </Sheet>
+    );
+  }
+
+  if (presentation === "slideOver") {
+    return (
+      <Sheet open onOpenChange={(next) => !next && closeLead()}>
+        <SheetPopup side="right" showCloseButton={false} className="w-[25rem] max-w-[100vw]">
           <div className="flex min-h-0 flex-1 flex-col">{panel}</div>
         </SheetPopup>
       </Sheet>

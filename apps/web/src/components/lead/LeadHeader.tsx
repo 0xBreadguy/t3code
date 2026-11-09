@@ -13,7 +13,9 @@ export function LeadHeader({
   scope,
   projectLabel,
   status,
+  rolesOpen,
   expanded,
+  onRoles,
   onSwitch,
   onExpand,
   onClose,
@@ -21,7 +23,9 @@ export function LeadHeader({
   readonly scope: LeadScope;
   readonly projectLabel: string;
   readonly status: string;
+  readonly rolesOpen: boolean;
   readonly expanded: boolean;
+  readonly onRoles: () => void;
   readonly onSwitch: (scope: LeadScope) => void;
   readonly onExpand: () => void;
   readonly onClose: () => void;
@@ -31,10 +35,10 @@ export function LeadHeader({
   const { environments } = useEnvironments();
   const environmentLabel = new Map(environments.map((entry) => [entry.environmentId, entry.label]));
   return (
-    <div className="flex items-center gap-1.5 border-b border-border/70 px-2 py-1.5">
+    <div className="relative z-10 flex shrink-0 items-center gap-1.5 border-b border-border/70 px-2 py-1.5">
       <Menu>
         <MenuTrigger
-          render={<Button size="xs" variant="ghost" className="min-w-0" />}
+          render={<Button size="xs" variant="ghost" className="max-w-full min-w-0 shrink" />}
           aria-label={`Lead for ${projectLabel} on ${environment?.label ?? "this environment"}. Change project`}
         >
           <span className="truncate">{projectLabel}</span>
@@ -66,7 +70,16 @@ export function LeadHeader({
       <Badge size="sm" variant="secondary" className="shrink-0">
         {status}
       </Badge>
-      <div className="ms-auto flex items-center gap-0.5">
+      <div className="ms-auto flex shrink-0 items-center gap-0.5">
+        <Button
+          size="xs"
+          variant={rolesOpen ? "secondary" : "ghost"}
+          aria-label="Roles and models"
+          aria-pressed={rolesOpen}
+          onClick={onRoles}
+        >
+          Roles
+        </Button>
         <Tooltip>
           <TooltipTrigger
             render={
