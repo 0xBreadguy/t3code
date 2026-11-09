@@ -1,6 +1,7 @@
 import {
   EnvironmentId,
   NodeId,
+  type OrchestratorMcpThreadReadResult,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
   ProjectId,
@@ -331,7 +332,7 @@ it("readThread keeps an activity page within an MCP client's output limit and pa
       runId: activeRunId,
       status: "completed",
       title: null,
-      text: `${position} `.padEnd(3_000, "x"),
+      text: position === 0 ? "😀a".repeat(30_000) : `${position} `.padEnd(3_000, "x"),
       updatedAt: now,
     },
   }));
@@ -341,7 +342,10 @@ it("readThread keeps an activity page within an MCP client's output limit and pa
       Layer.mergeAll(
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           getTimelinePage: (_threadId, options) => {
-            const after = rows.filter((row) => row.position > options.afterPosition);
+            const after =
+              options.itemId === undefined
+                ? rows.filter((row) => row.position > (options.afterPosition ?? -1))
+                : rows.filter((row) => row.sourceItemId === options.itemId);
             return Effect.succeed({
               items: after.slice(
                 0,
@@ -394,6 +398,26 @@ it("readThread keeps an activity page within an MCP client's output limit and pa
       afterPosition = result.nextPosition ?? undefined;
     }
     expect(positions).toEqual(rows.map((row) => row.position));
+
+    const longText = rows[0]!.item.text;
+    const pages: Array<string> = [];
+    let textOffset: number | null = 0;
+    while (textOffset !== null) {
+      const result: OrchestratorMcpThreadReadResult = yield* service.readThread(makeScope(), {
+        threadId: parentThreadId,
+        view: "activity",
+        itemId: rows[0]!.sourceItemId,
+        textOffset,
+        maxCharsPerItem: 50_000,
+      });
+      expect(JSON.stringify(result).length).toBeLessThanOrEqual(50_000);
+      const [item] = result.items;
+      expect(item?.text?.isWellFormed()).toBe(true);
+      pages.push(item!.text!);
+      textOffset = item!.nextTextOffset ?? null;
+    }
+    expect(pages.length).toBeGreaterThan(1);
+    expect(pages.join("")).toBe(longText);
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
 

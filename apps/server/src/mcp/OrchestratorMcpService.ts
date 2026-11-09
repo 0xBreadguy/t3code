@@ -144,6 +144,8 @@ const DEFAULT_THREAD_LIST_LIMIT = 50;
 const DEFAULT_THREAD_READ_LIMIT = 50;
 const DEFAULT_THREAD_RUN_LIMIT = 10;
 const DEFAULT_THREAD_ITEM_MAX_CHARS = 20_000;
+/** Claude Code rejects MCP results over ~25k tokens (~50k chars of this JSON); keep headroom. */
+const THREAD_READ_RESULT_MAX_CHARS = 30_000;
 
 interface ResolvedTarget {
   readonly modelSelection: ModelSelection;
@@ -611,13 +613,12 @@ function taskResultTransfer(
 
 function pageIncludesTerminalTaskResult(input: {
   readonly parent: Pick<OrchestrationV2ThreadProjection, "thread" | "contextTransfers">;
-  readonly page: ReadonlyArray<OrchestrationV2ThreadProjection["visibleTurnItems"][number]>;
+  readonly items: ReadonlyArray<OrchestratorMcpThreadTimelineItem>;
   readonly task: OrchestrationV2Subagent;
   readonly target: Pick<
     OrchestrationV2ThreadProjection,
     "thread" | "runs" | "contextTransfers" | "messages" | "turnItems" | "providerTurns"
   >;
-  readonly maxChars: number;
 }): boolean {
   const transfer = taskResultTransfer(input.parent, input.target, input.task);
   if (transfer === undefined) return false;
@@ -630,17 +631,14 @@ function pageIncludesTerminalTaskResult(input: {
   const result = subagentResultForRun(input.target, run);
   if (result.messageId === null && result.turnItemId === null) return false;
 
-  return input.page.some((row) => {
-    if (row.sourceThreadId !== input.target.thread.id) return false;
+  return input.items.some((item) => {
+    if (item.sourceThreadId !== input.target.thread.id) return false;
     const matchesResult =
-      (result.turnItemId !== null && row.sourceItemId === result.turnItemId) ||
+      (result.turnItemId !== null && item.itemId === result.turnItemId) ||
       (result.messageId !== null &&
-        row.item.type === "assistant_message" &&
-        row.item.messageId === result.messageId);
-    if (!matchesResult) return false;
-
-    const text = turnItemText(row.item);
-    return text !== null && text.length <= textPageEnd(text, 0, input.maxChars);
+        item.type === "assistant_message" &&
+        item.messageId === result.messageId);
+    return matchesResult && item.text !== null && !item.textTruncated;
   });
 }
 
@@ -1025,6 +1023,48 @@ function timelineItem(input: {
     nextTextOffset: textTruncated ? end : null,
     updatedAt: DateTime.formatIso(input.row.item.updatedAt),
   };
+}
+
+/** The longest text page under `input.maxChars` whose item JSON fits, or a one-char page. */
+function timelineItemWithin(
+  input: Parameters<typeof timelineItem>[0],
+  maxJsonChars: number,
+): OrchestratorMcpThreadTimelineItem {
+  let fitting = timelineItem({ ...input, maxChars: 1 });
+  let low = 2;
+  let high = input.maxChars - 1;
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    const candidate = timelineItem({ ...input, maxChars: mid });
+    if (JSON.stringify(candidate).length <= maxJsonChars) {
+      fitting = candidate;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+  return fitting;
+}
+
+/** Leading items whose result fits THREAD_READ_RESULT_MAX_CHARS; never empty for a non-empty page. */
+function timelineItemsWithinBudget(
+  envelope: Omit<OrchestratorMcpThreadReadResult, "items">,
+  inputs: ReadonlyArray<Parameters<typeof timelineItem>[0]>,
+): Array<OrchestratorMcpThreadTimelineItem> {
+  const budget = THREAD_READ_RESULT_MAX_CHARS - JSON.stringify({ ...envelope, items: [] }).length;
+  const items: Array<OrchestratorMcpThreadTimelineItem> = [];
+  let chars = 0;
+  for (const input of inputs) {
+    const item = timelineItem(input);
+    chars += JSON.stringify(item).length + (items.length === 0 ? 0 : 1);
+    if (chars <= budget) {
+      items.push(item);
+      continue;
+    }
+    if (items.length === 0) items.push(timelineItemWithin(input, budget));
+    break;
+  }
+  return items;
 }
 
 const make = Effect.gen(function* () {
@@ -3097,6 +3137,26 @@ const make = Effect.gen(function* () {
       const returnedRunIds = new Set(
         page.filter((row) => row.sourceThreadId === target.thread.id).map((row) => row.item.runId),
       );
+      const thread = threadDetail(
+        scope,
+        target,
+        timeline.totalItems,
+        shell,
+        yield* Clock.currentTimeMillis,
+      );
+      const recentRuns = target.runs
+        .toSorted((left, right) => right.ordinal - left.ordinal)
+        .slice(0, input.runLimit ?? DEFAULT_THREAD_RUN_LIMIT)
+        .map((run) => threadRun(target, run));
+      const items = timelineItemsWithinBudget(
+        { thread, recentRuns, nextPosition: page.at(-1)?.position ?? null, hasMore: false },
+        page.map((row) => ({
+          row,
+          maxChars,
+          messagesByThreadId,
+          ...(input.itemId === undefined ? {} : { textOffset: input.textOffset ?? 0 }),
+        })),
+      );
       const tasks =
         parent === undefined
           ? []
@@ -3132,10 +3192,9 @@ const make = Effect.gen(function* () {
           if (
             pageIncludesTerminalTaskResult({
               parent,
-              page,
+              items,
               task,
               target: { ...target, ...resultRecords },
-              maxChars,
             })
           ) {
             yield* readTask(
@@ -3149,27 +3208,11 @@ const make = Effect.gen(function* () {
         }
       }
       return {
-        thread: threadDetail(
-          scope,
-          target,
-          timeline.totalItems,
-          shell,
-          yield* Clock.currentTimeMillis,
-        ),
-        recentRuns: target.runs
-          .toSorted((left, right) => right.ordinal - left.ordinal)
-          .slice(0, input.runLimit ?? DEFAULT_THREAD_RUN_LIMIT)
-          .map((run) => threadRun(target, run)),
-        items: page.map((row) =>
-          timelineItem({
-            row,
-            maxChars,
-            messagesByThreadId,
-            ...(input.itemId === undefined ? {} : { textOffset: input.textOffset ?? 0 }),
-          }),
-        ),
-        nextPosition: page.at(-1)?.position ?? null,
-        hasMore: timeline.hasMore,
+        thread,
+        recentRuns,
+        items,
+        nextPosition: items.at(-1)?.position ?? null,
+        hasMore: timeline.hasMore || items.length < page.length,
       } satisfies OrchestratorMcpThreadReadResult;
     }),
     sendToThread: Effect.fn("OrchestratorMcpService.sendToThread")(function* (scope, input) {
