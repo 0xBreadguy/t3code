@@ -8,6 +8,8 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { useLeadAttention } from "./leadAttention";
+import { leadAttentionScopeKey, leadsNeedingYouScopes } from "./leadAttention.logic";
 
 export function LeadHeader({
   scope,
@@ -33,6 +35,8 @@ export function LeadHeader({
   const projects = useProjects();
   const environment = useEnvironment(scope.environmentId);
   const { environments } = useEnvironments();
+  const attention = useLeadAttention();
+  const needingYou = leadsNeedingYouScopes(attention);
   const environmentLabel = new Map(environments.map((entry) => [entry.environmentId, entry.label]));
   return (
     <div className="relative z-10 flex shrink-0 items-center gap-1.5 border-b border-border/70 px-2 py-1.5">
@@ -50,6 +54,7 @@ export function LeadHeader({
             const selected =
               projectScope.environmentId === scope.environmentId &&
               projectScope.projectId === scope.projectId;
+            const needsYou = needingYou.has(leadAttentionScopeKey(projectScope));
             return (
               <MenuItem
                 key={`${project.environmentId}:${project.id}`}
@@ -61,6 +66,11 @@ export function LeadHeader({
                     {environmentLabel.get(project.environmentId) ?? project.environmentId}
                   </span>
                 </span>
+                {needsYou ? (
+                  <Badge size="sm" variant="warning">
+                    Needs you
+                  </Badge>
+                ) : null}
                 {selected ? <span className="sr-only">Selected</span> : null}
               </MenuItem>
             );

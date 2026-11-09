@@ -15,10 +15,13 @@ import { LeadPanel } from "./LeadPanel";
 import { useLeadPage } from "./useLeadPage";
 import { useLeadPresentation } from "./useLeadPresentation";
 import { useLeadSession } from "./useLeadSession";
+import { useLeadAttention } from "./leadAttention";
+import { leadAttentionScopeKey, leadsNeedingYouScopes } from "./leadAttention.logic";
 import { useLeadUiStore } from "./leadUiStore";
 import { Popover, PopoverPopup } from "../ui/popover";
 import { Sheet, SheetPopup } from "../ui/sheet";
 import { Button } from "../ui/button";
+import { Badge } from "../ui/badge";
 
 const RUNNING_STATUSES = new Set(["preparing", "queued", "starting", "running", "waiting"]);
 
@@ -40,7 +43,9 @@ function restoreFocusTarget(element: HTMLElement | null): boolean {
 function LeadProjectPicker({ onPick }: { readonly onPick: (scope: LeadScope) => void }) {
   const projects = useProjects();
   const { environments } = useEnvironments();
+  const attention = useLeadAttention();
   const closeLead = useLeadUiStore((state) => state.closeLead);
+  const needingYou = leadsNeedingYouScopes(attention);
   const environmentLabel = new Map(environments.map((entry) => [entry.environmentId, entry.label]));
   return (
     <div className="flex min-h-0 flex-col" role="dialog" aria-label="Choose a project for the lead">
@@ -73,7 +78,17 @@ function LeadProjectPicker({ onPick }: { readonly onPick: (scope: LeadScope) => 
               }
             >
               <span className="truncate">{project.title}</span>
-              <span className="shrink-0 text-2xs text-muted-foreground">
+              <span className="flex shrink-0 items-center gap-1.5 text-2xs text-muted-foreground">
+                {needingYou.has(
+                  leadAttentionScopeKey({
+                    environmentId: project.environmentId,
+                    projectId: project.id,
+                  }),
+                ) ? (
+                  <Badge size="sm" variant="warning">
+                    Needs you
+                  </Badge>
+                ) : null}
                 {environmentLabel.get(project.environmentId) ?? project.environmentId}
               </span>
             </button>

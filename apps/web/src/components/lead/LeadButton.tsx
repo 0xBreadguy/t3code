@@ -17,6 +17,8 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useLeadPage } from "./useLeadPage";
 import { useLeadEnvironment, useLeadSession } from "./useLeadSession";
 import { useLeadLiveState } from "./useLeadLiveState";
+import { countLeadsNeedingYou, leadButtonLabelWithAttention } from "./leadAttention.logic";
+import { useLeadAttention } from "./leadAttention";
 import { useLeadUiStore } from "./leadUiStore";
 
 function useLeadButtonScope(): {
@@ -41,6 +43,8 @@ export function LeadButton({ className }: { readonly className?: string }) {
   const setAnchorElement = useLeadUiStore((state) => state.setAnchorElement);
   const unreadScopeKeys = useLeadUiStore((state) => state.unreadScopeKeys);
   const { environments } = useEnvironments();
+  const attention = useLeadAttention();
+  const needsYouCount = countLeadsNeedingYou(attention);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const shortcutLabel = shortcutLabelForCommand(keybindings, "lead.toggle");
   const project = useProject(
@@ -65,7 +69,7 @@ export function LeadButton({ className }: { readonly className?: string }) {
               scope,
               scopeLabel: project?.title ?? "this project",
               environmentLabel: environment.label ?? "this environment",
-              needsYouCount: 0,
+              needsYouCount,
               reportsToReviewCount: pendingHandoffs,
               grantActive,
               unreadReply: unreadScopeKeys.includes(leadScopeKey(scope)),
@@ -73,6 +77,7 @@ export function LeadButton({ className }: { readonly className?: string }) {
             },
           ],
   });
+  const label = leadButtonLabelWithAttention(status.label, attention);
 
   if (environments.length === 0) return null;
   if (expanded) return null;
@@ -88,7 +93,7 @@ export function LeadButton({ className }: { readonly className?: string }) {
           variant="ghost"
           size="sm"
           pressed={open}
-          aria-label={status.label}
+          aria-label={label}
           aria-expanded={open}
           aria-controls="lead-panel"
           aria-keyshortcuts="Meta+I Control+I"
@@ -102,9 +107,9 @@ export function LeadButton({ className }: { readonly className?: string }) {
             <span className="hidden sm:inline">Lead</span>
             {status.grantActive ? <ShieldCheckIcon className="size-3.5" /> : null}
             {status.offlineEnvironments.length > 0 ? <WifiOffIcon className="size-3.5" /> : null}
-            {status.needsYouCount > 0 ? (
+            {needsYouCount > 0 ? (
               <Badge size="sm" variant="warning">
-                {status.needsYouCount}
+                {needsYouCount}
               </Badge>
             ) : status.reportsToReviewCount > 0 ? (
               <Badge size="sm" variant="secondary">
