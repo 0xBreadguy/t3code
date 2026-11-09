@@ -43,7 +43,6 @@ import {
   SearchIcon,
   StarIcon,
   Trash2Icon,
-  TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -1289,28 +1288,13 @@ export function VoiceSettingsPanel() {
         <SettingsRow
           {...searchableSetting("voice-transcription-destination")}
           title="Transcribe with"
-          description="Where your speech is turned into text."
+          description={
+            destination.environmentId && chosenUnsupported
+              ? `${chosenEnvironment.label} can’t transcribe audio locally. Choose another destination.`
+              : "Where your speech is turned into text."
+          }
           control={
             <div className="flex min-w-0 items-center gap-1.5">
-              {destination.environmentId && chosenUnsupported ? (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        size="icon-sm"
-                        variant="ghost"
-                        aria-label={`${chosenEnvironment.label} can’t transcribe audio locally`}
-                      >
-                        <TriangleAlertIcon className="text-warning" />
-                      </Button>
-                    }
-                  />
-                  <TooltipPopup>
-                    {chosenEnvironment.label} can’t transcribe audio locally. Choose another
-                    destination.
-                  </TooltipPopup>
-                </Tooltip>
-              ) : null}
               <Select
                 value={destinationValue}
                 onValueChange={(value) => {
