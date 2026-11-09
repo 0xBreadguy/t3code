@@ -419,6 +419,15 @@ it("readThread keeps an activity page within an MCP client's output limit and pa
     }
     expect(pages.length).toBeGreaterThan(1);
     expect(pages.join("")).toBe(longText);
+
+    (projection.thread as { title: string }).title = "標".repeat(30_000);
+    const underHugeTitle = yield* service.readThread(makeScope(), {
+      threadId: parentThreadId,
+      view: "activity",
+      itemId: rows[0]!.sourceItemId,
+      maxCharsPerItem: 50_000,
+    });
+    expect(underHugeTitle.items[0]?.text?.length).toBeGreaterThan(1_000);
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
 

@@ -1071,7 +1071,11 @@ function timelineItemsWithinBudget(
   envelope: Omit<OrchestratorMcpThreadReadResult, "items">,
   inputs: ReadonlyArray<Parameters<typeof timelineItem>[0]>,
 ): Array<OrchestratorMcpThreadTimelineItem> {
-  const budget = THREAD_READ_RESULT_MAX_BYTES - jsonBytes({ ...envelope, items: [] });
+  // An oversized envelope (say, a huge thread title) must not starve items to one char per read.
+  const budget = Math.max(
+    THREAD_READ_RESULT_MAX_BYTES - jsonBytes({ ...envelope, items: [] }),
+    THREAD_READ_RESULT_MAX_BYTES / 2,
+  );
   const items: Array<OrchestratorMcpThreadTimelineItem> = [];
   let bytes = 0;
   for (const input of inputs) {
