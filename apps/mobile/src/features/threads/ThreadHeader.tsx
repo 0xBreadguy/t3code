@@ -10,6 +10,10 @@ import {
   type ThreadGitControlsProps,
 } from "./ThreadGitControls";
 
+import { leadEntryLabel } from "../lead/leadPresentation";
+import { useOpenLeadSheet } from "../lead/useOpenLeadSheet";
+import { useLeadAttentionCount } from "../../state/use-lead-attention";
+
 export function ThreadHeader(props: {
   readonly title: string;
   readonly subtitle: string;
@@ -25,6 +29,9 @@ export function ThreadHeader(props: {
   const goBack = useWorkspaceBackNavigation("threads");
   const { panes, toggleAuxiliaryPane, composerKeyboardActive, startNewTask } =
     useAdaptiveWorkspaceLayout();
+  const { environmentId, threadId } = props.gitControls;
+  const { available: leadAvailable, open: openLead } = useOpenLeadSheet();
+  const leadsNeedingAttention = useLeadAttentionCount();
   const gitMenu = useThreadGitMenuDefinition(props.gitControls);
   const terminalMenu = threadTerminalMenu(props.gitControls);
   const filesVisible = props.inspectorMode === "files" && panes.auxiliaryPaneVisible;
@@ -41,6 +48,13 @@ export function ThreadHeader(props: {
         },
       ]
     : [];
+  if (leadAvailable && !props.draft) {
+    actions.unshift({
+      accessibilityLabel: leadEntryLabel(leadsNeedingAttention),
+      icon: leadsNeedingAttention > 0 ? "exclamationmark.circle" : "circle.inset.filled",
+      onPress: () => openLead({ environmentId, threadId }),
+    });
+  }
   const menus = [gitMenu, terminalMenu].filter((menu): menu is AppBarMenu => menu !== null);
 
   return (

@@ -1,0 +1,249 @@
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import type { LeadContinuity, LeadScope } from "@t3tools/client-runtime/lead/scope";
+import type { LeadReadResult } from "@t3tools/client-runtime/rpc/lead";
+import { useQuietThreadProjection, useProject, useProjects } from "../../state/entities";
+import { useEnvironment } from "../../state/environments";
+import { LeadComposer } from "./LeadComposer";
+import { LeadContinuityBar } from "./LeadContinuityBar";
+import { LeadConversation } from "./LeadConversation";
+import { LeadHeader } from "./LeadHeader";
+import { LeadPending } from "./LeadPending";
+import { LeadRolesView } from "./LeadRolesView";
+import { LeadSetup } from "./LeadSetup";
+import { LeadWork } from "./LeadWork";
+import { useLeadAttention } from "./leadAttention";
+import { leadAttentionScopeKey } from "./leadAttention.logic";
+import { useLeadUiStore } from "./leadUiStore";
+import type { LeadPage } from "./useLeadPage";
+import { useLeadLiveState } from "./useLeadLiveState";
+import type { LeadSessionState } from "./useLeadSession";
+
+const RUNNING_STATUSES = new Set(["preparing", "queued", "starting", "running", "waiting"]);
+
+function useLeadRunning(scope: LeadScope, data: LeadReadResult | null): boolean {
+  const threadRef =
+    data?.thread === null || data?.thread === undefined
+      ? null
+      : { environmentId: scope.environmentId, threadId: data.thread.threadId };
+  const projection = useQuietThreadProjection(threadRef);
+  return projection?.projection.runs.some((run) => RUNNING_STATUSES.has(run.status)) ?? false;
+}
+
+function leadStatusLabel(input: {
+  readonly capabilityReason: string | null;
+  readonly online: boolean;
+  readonly running: boolean;
+  readonly ownershipActive: boolean;
+  readonly ownershipScope: "project" | "threads" | null;
+  readonly reportsToReview: number;
+}): string {
+  if (input.capabilityReason !== null) return "Needs update";
+  if (!input.online) return "Offline";
+  if (input.running) return "Writing…";
+  if (input.ownershipActive) {
+    return input.ownershipScope === "project" ? "Owns project" : "Owns batch";
+  }
+  if (input.reportsToReview > 0) return "Reports to review";
+  return "Observing";
+}
+
+export function LeadPanel({
+  scope,
+  page,
+  continuity,
+  session,
+  projectLabel,
+  canOperate,
+  canWriteSettings,
+  expanded,
+  onSwitch,
+  onExpand,
+  onClose,
+  onChanged,
+}: {
+  readonly scope: LeadScope;
+  readonly page: LeadPage;
+  readonly continuity: LeadContinuity;
+  readonly session: LeadSessionState;
+  readonly projectLabel: string;
+  readonly canOperate: boolean;
+  readonly canWriteSettings: boolean;
+  readonly expanded: boolean;
+  readonly onSwitch: (scope: LeadScope) => void;
+  readonly onExpand: () => void;
+  readonly onClose: () => void;
+  readonly onChanged: () => void;
+}) {
+  const environment = useEnvironment(scope.environmentId);
+  const project = useProject(scopeProjectRef(scope.environmentId, scope.projectId));
+  const projects = useProjects();
+  const attention = useLeadAttention();
+  const data = session.data;
+  const running = useLeadRunning(scope, data);
+  const { state, pendingHandoffCount } = useLeadLiveState(scope, data);
+  const hostedView = useLeadUiStore((store) => store.hostedView);
+  const setHostedView = useLeadUiStore((store) => store.setHostedView);
+  const capabilityReason =
+    session.capability.kind === "unsupported"
+      ? session.capability.reason
+      : session.capability.kind === "offline"
+        ? `${environment?.label ?? "This environment"} is offline.`
+        : null;
+  const ownership = state?.ownership ?? null;
+  const ownershipActive = ownership !== null && ownership.revokedAt === null;
+  const status = leadStatusLabel({
+    capabilityReason,
+    online: session.online,
+    running,
+    ownershipActive,
+    ownershipScope: ownership?.scope.type ?? null,
+    reportsToReview: pendingHandoffCount,
+  });
+  const threadRef =
+    data?.thread === null || data?.thread === undefined
+      ? null
+      : { environmentId: scope.environmentId, threadId: data.thread.threadId };
+  const resolvedModel =
+    data?.thread === undefined || data?.thread === null
+      ? null
+      : `${data.thread.model} · ${data.thread.providerInstanceId}`;
+  const roleLine = resolvedModel === null ? null : `Runs as ${resolvedModel}`;
+  const projectTitles = new Map(
+    projects.map((entry) => [
+      leadAttentionScopeKey({ environmentId: entry.environmentId, projectId: entry.id }),
+      entry.title,
+    ]),
+  );
+  const otherNeedingYou = attention.filter(
+    (lead) =>
+      lead.needsYou &&
+      !(lead.environmentId === scope.environmentId && lead.projectId === scope.projectId),
+  );
+  const otherNeedingYouLead = otherNeedingYou.length === 1 ? (otherNeedingYou[0] ?? null) : null;
+  const otherNeedingYouLabel =
+    otherNeedingYouLead !== null
+      ? `The ${projectTitles.get(leadAttentionScopeKey(otherNeedingYouLead)) ?? "other project"} lead needs you. Choose it in the project menu.`
+      : otherNeedingYou.length > 1
+        ? `${otherNeedingYou.length} other leads need you. Choose one in the project menu.`
+        : null;
+
+  return (
+    <div
+      id="lead-panel"
+      role="dialog"
+      aria-label={`${projectLabel} lead`}
+      aria-modal="false"
+      className="flex min-h-0 flex-1 flex-col"
+      data-lead-panel=""
+      onKeyDown={(event) => {
+        if (hostedView !== "roles" || event.key !== "Escape" || event.defaultPrevented) return;
+        event.preventDefault();
+        event.stopPropagation();
+        setHostedView("none");
+      }}
+    >
+      <LeadHeader
+        scope={scope}
+        projectLabel={projectLabel}
+        status={status}
+        rolesOpen={hostedView === "roles"}
+        expanded={expanded}
+        onRoles={() => setHostedView(hostedView === "roles" ? "none" : "roles")}
+        onSwitch={onSwitch}
+        onExpand={onExpand}
+        onClose={onClose}
+      />
+      {capabilityReason !== null ? (
+        <p className="border-b border-border/70 bg-muted/30 px-3 py-1.5 text-2xs text-muted-foreground">
+          {capabilityReason} Your draft stays here.
+        </p>
+      ) : null}
+      {session.error !== null ? (
+        <p className="border-b border-border/70 bg-destructive/8 px-3 py-1.5 text-2xs text-destructive-foreground">
+          {session.error}
+        </p>
+      ) : null}
+      <LeadContinuityBar continuity={continuity} scope={scope} onSwitch={onSwitch} />
+      {otherNeedingYouLabel !== null ? (
+        <p
+          className="border-b border-border/70 bg-warning/8 px-3 py-1.5 text-2xs text-warning-foreground"
+          data-lead-other-needs-you=""
+        >
+          {otherNeedingYouLabel}
+        </p>
+      ) : null}
+      {hostedView === "roles" ? (
+        <LeadRolesView
+          scope={scope}
+          data={data}
+          environmentLabel={environment?.label ?? "this environment"}
+          onBack={() => setHostedView("none")}
+          onClose={onClose}
+        />
+      ) : (
+        <>
+          {data === null && capabilityReason === null ? (
+            <p className="px-3 py-2 text-2xs text-muted-foreground">Reading this project's lead…</p>
+          ) : null}
+          <LeadPending
+            key={
+              threadRef === null
+                ? `${scope.environmentId}\u0000${scope.projectId}`
+                : `${scope.environmentId}\u0000${threadRef.threadId}`
+            }
+            threadRef={threadRef}
+          />
+          {data !== null && data.binding === null && capabilityReason === null ? (
+            <LeadSetup
+              scope={scope}
+              data={data}
+              projectLabel={project?.title ?? projectLabel}
+              canOperate={canOperate}
+              onChanged={onChanged}
+            />
+          ) : null}
+          <LeadWork
+            scope={scope}
+            data={data}
+            state={state}
+            pendingHandoffCount={pendingHandoffCount}
+            capabilityReason={capabilityReason}
+            canOperate={canOperate}
+            canWriteSettings={canWriteSettings}
+            projectLabel={project?.title ?? projectLabel}
+            onChanged={onChanged}
+          />
+          <LeadConversation
+            threadRef={threadRef}
+            className="min-h-0 flex-1 overflow-y-auto px-3 py-2"
+            emptyCopy={
+              data === null || data.binding === null
+                ? `Ask about work in ${projectLabel}. The lead observes and recommends. ` +
+                  "It acts on what you ask here; broader or unattended work needs you to hand over ownership."
+                : state === null || state.handoffs.length === 0
+                  ? "Nothing handed back yet. Workers report here when they finish."
+                  : "Ask the lead what to do next."
+            }
+          />
+          {roleLine !== null ? (
+            <p className="border-t border-border/70 px-3 py-1 text-3xs text-muted-foreground">
+              {roleLine}
+            </p>
+          ) : null}
+          <LeadComposer
+            scope={scope}
+            page={page}
+            data={data}
+            capabilityReason={capabilityReason}
+            running={running}
+            projectLabel={projectLabel}
+            contextEnabled={
+              session.capability.kind === "supported" && session.capability.contextRefs
+            }
+            onSent={onChanged}
+          />
+        </>
+      )}
+    </div>
+  );
+}

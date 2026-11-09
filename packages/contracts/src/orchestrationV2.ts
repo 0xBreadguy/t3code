@@ -45,6 +45,7 @@ import { AuthMcpClientAccess } from "./auth.ts";
 import { ChatAttachment } from "./chatAttachment.ts";
 import { ThreadGuestShare } from "./guestShare.ts";
 import { StoredThreadTags, ThreadTag } from "./threadTags.ts";
+import { LeadHandoff, LeadOwnershipGrant } from "./lead.ts";
 import {
   OrchestrationSearchThreadsInput,
   OrchestrationSearchThreadsResult,
@@ -441,6 +442,20 @@ const LenientThreadOpens = Schema.NullOr(OrchestrationV2ThreadOpens).pipe(
   Schema.catchDecoding(() => Effect.succeedSome(null)),
 );
 
+/**
+ * Durable state for a thread appointed as a project lead. Bounded and
+ * revisioned so concurrent writers compare-and-swap instead of losing records.
+ * Old payloads decode as no state.
+ */
+export const OrchestrationV2LeadState = Schema.Struct({
+  revision: NonNegativeInt,
+  handoffs: Schema.Array(LeadHandoff).check(Schema.isMaxLength(100)),
+  ownership: Schema.NullOr(LeadOwnershipGrant).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+});
+export type OrchestrationV2LeadState = typeof OrchestrationV2LeadState.Type;
+
 export const OrchestrationV2AppThread = Schema.Struct({
   ...OrchestrationV2CreationFields,
   id: ThreadId,
@@ -514,6 +529,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
     ),
   ),
   deletedAt: Schema.NullOr(Schema.DateTimeUtc),
+  leadState: Schema.optionalKey(Schema.NullOr(OrchestrationV2LeadState)),
 });
 export type OrchestrationV2AppThread = typeof OrchestrationV2AppThread.Type;
 
@@ -2320,6 +2336,8 @@ export const OrchestrationV2AppThreadJson = OrchestrationV2AppThread.mapFields((
     ),
   ),
   deletedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  // Lead records keep ISO strings on the wire; only thread dates convert to DateTime.Utc.
+  leadState: Schema.optionalKey(Schema.NullOr(OrchestrationV2LeadState)),
 }));
 export type OrchestrationV2AppThreadJson = typeof OrchestrationV2AppThreadJson.Type;
 
@@ -3085,6 +3103,12 @@ export const OrchestrationV2Command = Schema.Union([
     limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecoveryUpdate)),
     /** Link (object) or unlink (null) a pull request; absent leaves it unchanged. */
     linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
+    /**
+     * Server-written lead state. Clients never supply it through the metadata
+     * RPC; LeadService commits it with a compare-and-swap revision.
+     */
+    leadState: Schema.optionalKey(Schema.NullOr(OrchestrationV2LeadState)),
+    expectedLeadRevision: Schema.optionalKey(NonNegativeInt),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.pull-request.link"),

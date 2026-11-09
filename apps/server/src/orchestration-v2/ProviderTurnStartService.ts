@@ -46,6 +46,7 @@ import {
   latestNativeContextUsage,
 } from "@t3tools/provider-core/server/handoffBudget";
 import { deliverContextHandoffs, withInlineContext } from "./ContextHandoffDelivery.ts";
+import { isAppointedLead, leadTurnGuidance } from "@t3tools/shared/leadPolicy";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -161,6 +162,7 @@ export const layer: Layer.Layer<
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
+    const serverSettings = yield* ServerSettings.ServerSettingsService;
     const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
 
     const resolveRecreateBase = Effect.fn("ProviderTurnStartService.resolveRecreateBase")(
@@ -844,6 +846,32 @@ export const layer: Layer.Layer<
       // Codex and Claude parse /goal from the prompt, so it goes verbatim and history waits a turn.
       const goalDriver = session.driver === "codex" || session.driver === "claudeAgent";
       const goalCommand = goalDriver && parseGoalCommand(message) !== null;
+      // One shared preparation boundary: every provider turn sees the project's
+      // finishing policy, and an appointed lead also gets its coordination terms.
+      const leadGuidance = yield* serverSettings.getSettings.pipe(
+        Effect.flatMap((settings) => {
+          const policy = {
+            settings,
+            projectId: projection.thread.projectId,
+            threadId: projection.thread.id,
+            leadState: projection.thread.leadState,
+          } as const;
+          if (!isAppointedLead(settings, projection.thread.projectId, projection.thread.id)) {
+            return Effect.succeed(leadTurnGuidance(policy));
+          }
+          return projects.getById(projection.thread.projectId).pipe(
+            Effect.map(Option.getOrUndefined),
+            Effect.map((project) =>
+              leadTurnGuidance({
+                ...policy,
+                ...(project?.title === undefined ? {} : { projectTitle: project.title }),
+              }),
+            ),
+            Effect.orElseSucceed(() => leadTurnGuidance(policy)),
+          );
+        }),
+        Effect.orElseSucceed(() => null),
+      );
       // The provider turn marks cancellation work delivered; restart continuations use their own text or resume natively.
       const noteContinuation = isRestartNoteContinuation(
         run,
@@ -1600,7 +1628,7 @@ export const layer: Layer.Layer<
             sideChatHandoff === undefined || compact || goalCommand
               ? ""
               : sideChatHandoff.summaryText;
-          const context = [delivery.context, sideChatContext, restartNote]
+          const context = [delivery.context, sideChatContext, restartNote, leadGuidance ?? ""]
             .filter((part) => part !== "")
             .join("\n\n");
           const { restartContinuationOfRunId: _resumedRunId, ...promptedInput } = turnInput;

@@ -12,6 +12,7 @@ const LISTED_OVERLAY_ROUTES: ReadonlySet<string> = new Set([
   "GitCommit",
   "GitConfirm",
   "GitOverview",
+  "LeadSheet",
   "NewTaskProject",
   "NewTaskFiles",
   "NewTaskFile",

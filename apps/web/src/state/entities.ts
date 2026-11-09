@@ -17,6 +17,7 @@ import {
   parseThreadKey,
   threadKey,
 } from "@t3tools/client-runtime/state/entities";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ScopedProjectRef, ScopedThreadRef } from "@t3tools/contracts";
 import type {
   EnvironmentId,
@@ -85,11 +86,15 @@ export function useThreadRefs(enabled = true): ReadonlyArray<ScopedThreadRef> {
 export function useEnvironmentThreadRefs(
   environmentId: EnvironmentId | null,
 ): ReadonlyArray<ScopedThreadRef> {
-  return useAtomValue(
+  const refs = useAtomValue(
     environmentId === null
       ? EMPTY_THREAD_REFS_ATOM
       : environmentThreadShells.environmentThreadRefsAtom(environmentId),
   );
+  const leadThreadKeys = useLeadThreadKeys();
+  return leadThreadKeys.size === 0
+    ? refs
+    : refs.filter((ref) => !isLeadThread(ref.environmentId, ref.threadId, leadThreadKeys));
 }
 
 export function useProjects(): ReadonlyArray<EnvironmentProject> {
@@ -101,10 +106,37 @@ export function useServerConfigs() {
   return useAtomValue(environmentPresentations.serverConfigsAtom);
 }
 
+/**
+ * Lead conversations are ordinary threads internally but never appear as user
+ * threads. The server publishes bindings; lists and switchers filter them here.
+ */
+function useLeadThreadKeys(): ReadonlySet<string> {
+  const configs = useServerConfigs();
+  const keys = new Set<string>();
+  for (const [environmentId, config] of configs) {
+    for (const binding of Object.values(config.settings.projectLeadConfigs)) {
+      keys.add(scopedThreadKey({ environmentId, threadId: binding.threadId }));
+    }
+  }
+  return keys;
+}
+
+function isLeadThread(
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+  leadThreadKeys: ReadonlySet<string>,
+): boolean {
+  return leadThreadKeys.has(scopedThreadKey({ environmentId, threadId }));
+}
+
 export function useThreadShells(enabled = true): ReadonlyArray<EnvironmentThreadShell> {
-  return useAtomValue(
+  const threads = useAtomValue(
     enabled ? environmentThreadShells.threadShellsAtom : EMPTY_THREAD_SHELLS_ATOM,
   );
+  const leadThreadKeys = useLeadThreadKeys();
+  return leadThreadKeys.size === 0
+    ? threads
+    : threads.filter((thread) => !isLeadThread(thread.environmentId, thread.id, leadThreadKeys));
 }
 
 /** Whether any connected environment is hiding tagged threads right now. */
@@ -119,9 +151,13 @@ export function useHiddenThreadKeys(): ReadonlySet<string> {
 
 /** Thread shells minus those the tag filter hides, for lists that show threads to the user. */
 export function useVisibleThreadShells(enabled = true): ReadonlyArray<EnvironmentThreadShell> {
-  return useAtomValue(
+  const threads = useAtomValue(
     enabled ? environmentThreadShells.visibleThreadShellsAtom : EMPTY_THREAD_SHELLS_ATOM,
   );
+  const leadThreadKeys = useLeadThreadKeys();
+  return leadThreadKeys.size === 0
+    ? threads
+    : threads.filter((thread) => !isLeadThread(thread.environmentId, thread.id, leadThreadKeys));
 }
 
 export function useAllEnvironmentShellsBootstrapped(): boolean {
@@ -162,7 +198,11 @@ export function useQuietThreadShell(ref: ScopedThreadRef | null): EnvironmentThr
 
 /** Every thread shell, held through streaming ticks; see quietThreadShellAtom. */
 export function useQuietThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
-  return useAtomValue(environmentThreadShells.quietThreadShellsAtom);
+  const threads = useAtomValue(environmentThreadShells.quietThreadShellsAtom);
+  const leadThreadKeys = useLeadThreadKeys();
+  return leadThreadKeys.size === 0
+    ? threads
+    : threads.filter((thread) => !isLeadThread(thread.environmentId, thread.id, leadThreadKeys));
 }
 
 export function useChildThreadInputs(ref: ScopedThreadRef | null) {

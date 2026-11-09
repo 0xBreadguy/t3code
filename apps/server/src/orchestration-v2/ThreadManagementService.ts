@@ -21,6 +21,7 @@ import {
   type ModelSelection,
   type OrchestrationV2Actor,
   type OrchestrationV2Command,
+  type OrchestrationMessageContext,
   type OrchestrationV2GetTurnItemResult,
   type OrchestrationV2ServerCommand,
   type OrchestrationV2ConversationMessage,
@@ -144,6 +145,7 @@ export interface ThreadManagementSendInput {
   readonly senderThreadId?: ThreadId;
   readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
+  readonly context?: OrchestrationMessageContext | undefined;
   readonly modelSelection?: ModelSelection;
   readonly mode: ThreadManagementSendMode;
   /** Start a new provider session; the orchestrator queues it instead of steering. */
@@ -860,6 +862,7 @@ const make = Effect.gen(function* () {
       ...(input.senderThreadId === undefined ? {} : { senderThreadId: input.senderThreadId }),
       text: input.text,
       attachments: input.attachments,
+      ...(input.context === undefined ? {} : { context: input.context }),
       ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
       ...(input.freshContext ? { freshContext: true } : {}),
       dispatchMode,

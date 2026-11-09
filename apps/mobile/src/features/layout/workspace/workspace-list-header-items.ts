@@ -40,8 +40,26 @@ export function createWorkspaceListHeaderItems(input: {
     readonly items: ReadonlyArray<AppBarMenuItem>;
   };
   readonly onOpenSettings?: () => void;
+  readonly lead?: {
+    readonly label: string;
+    readonly needsAttention: boolean;
+    readonly onPress: () => void;
+  };
 }): NativeStackHeaderItem[] {
   return [
+    ...(input.lead
+      ? [
+          withNativeGlassHeaderItem({
+            type: "button",
+            label: "Lead",
+            accessibilityLabel: input.lead.label,
+            icon: sfSymbolIcon(
+              input.lead.needsAttention ? "exclamationmark.circle" : "circle.inset.filled",
+            ),
+            onPress: input.lead.onPress,
+          }),
+        ]
+      : []),
     withNativeGlassHeaderItem({
       type: "menu",
       axisBehavior: "horizontalOnly",

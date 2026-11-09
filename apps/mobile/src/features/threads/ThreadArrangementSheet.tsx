@@ -17,6 +17,8 @@ import { scopedThreadKey } from "../../lib/scopedEntities";
 import { deriveThreadArrangementSizing } from "../../lib/layout";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { threadListEnvironmentsAtom } from "../../state/presentation";
+import { useLeadThreadKeys } from "../../state/entities";
+import { withoutLeadThreads } from "../../state/leadThreadFilter";
 import { environmentThreadShells } from "../../state/threads";
 import { sortSettledThreads } from "@t3tools/client-runtime/state/thread-sort";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../../state/olderSettledShelf";
@@ -169,7 +171,12 @@ function ThreadArrangementSheet(props: { onClose: () => void }) {
     baseFontSize: appearance.baseFontSize,
     fontScale,
   });
-  const threads = useAtomValue(environmentThreadShells.navigationThreadShellsAtom);
+  const rawThreads = useAtomValue(environmentThreadShells.navigationThreadShellsAtom);
+  const leadThreadKeys = useLeadThreadKeys();
+  const threads = useMemo(
+    () => withoutLeadThreads(rawThreads, leadThreadKeys),
+    [rawThreads, leadThreadKeys],
+  );
   const configs = useAtomValue(environmentServerConfigsAtom);
   const listEnvironments = useAtomValue(threadListEnvironmentsAtom);
   const queuedThreadKeys = useAtomValue(queuedThreadKeysAtom);

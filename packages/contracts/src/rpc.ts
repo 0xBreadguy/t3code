@@ -235,6 +235,21 @@ import {
   OrchestrationV2ThreadLaunchError,
 } from "./orchestrationV2.ts";
 import {
+  LEAD_WS_METHODS,
+  LeadAuthorityResult,
+  LeadConfigureInput,
+  LeadConfigureResult,
+  LeadEnsureInput,
+  LeadEnsureResult,
+  LeadGrantInput,
+  LeadRpcError,
+  LeadReadInput,
+  LeadReadResult,
+  LeadRevokeInput,
+  LeadSendInput,
+  LeadSendResult,
+} from "./lead.ts";
+import {
   ProjectCreateNewInput,
   ProjectCreateNewResult,
   ProjectCreateFromThreadInput,
@@ -1754,6 +1769,42 @@ const WsSubscribeDeviceStateRpc = Rpc.make(WS_METHODS.subscribeDeviceState, {
   stream: true,
 });
 
+const WsLeadEnsureRpc = Rpc.make(LEAD_WS_METHODS.ensure, {
+  payload: LeadEnsureInput,
+  success: LeadEnsureResult,
+  error: Schema.Union([LeadRpcError, EnvironmentAuthorizationError]),
+});
+
+const WsLeadReadRpc = Rpc.make(LEAD_WS_METHODS.read, {
+  payload: LeadReadInput,
+  success: LeadReadResult,
+  error: Schema.Union([LeadRpcError, EnvironmentAuthorizationError]),
+});
+
+const WsLeadSendRpc = Rpc.make(LEAD_WS_METHODS.send, {
+  payload: LeadSendInput,
+  success: LeadSendResult,
+  error: Schema.Union([LeadRpcError, EnvironmentAuthorizationError]),
+});
+
+const WsLeadConfigureRpc = Rpc.make(LEAD_WS_METHODS.configure, {
+  payload: LeadConfigureInput,
+  success: LeadConfigureResult,
+  error: Schema.Union([LeadRpcError, EnvironmentAuthorizationError]),
+});
+
+const WsLeadGrantRpc = Rpc.make(LEAD_WS_METHODS.grant, {
+  payload: LeadGrantInput,
+  success: LeadAuthorityResult,
+  error: Schema.Union([LeadRpcError, EnvironmentAuthorizationError]),
+});
+
+const WsLeadRevokeRpc = Rpc.make(LEAD_WS_METHODS.revoke, {
+  payload: LeadRevokeInput,
+  success: LeadAuthorityResult,
+  error: Schema.Union([LeadRpcError, EnvironmentAuthorizationError]),
+});
+
 const WsOrchestrationV2DispatchCommandRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, {
   payload: OrchestrationV2RpcSchemas.dispatchCommand.input,
   success: OrchestrationV2RpcSchemas.dispatchCommand.output,
@@ -2244,6 +2295,12 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeServerLifecycleRpc,
   WsSubscribeAuthAccessRpc,
   WsSubscribeResourceTelemetryRpc,
+  WsLeadEnsureRpc,
+  WsLeadReadRpc,
+  WsLeadSendRpc,
+  WsLeadConfigureRpc,
+  WsLeadGrantRpc,
+  WsLeadRevokeRpc,
   WsOrchestrationV2DispatchCommandRpc,
   WsOrchestrationV2GetWorkflowScriptRpc,
   WsOrchestrationV2GetNativeChildWorkRpc,

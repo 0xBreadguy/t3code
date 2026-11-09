@@ -27,12 +27,14 @@ import {
 } from "@t3tools/shared/threadLinks";
 import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
+import { useMemo } from "react";
 
 import { threadChipTargets } from "../lib/enrichedLinkPresentation";
 import { resolveProjectChipIcon } from "../lib/projectIcon";
 import { projectGlyphImageAtom, projectGlyphKey } from "../native/ProjectChipIconImages";
 import { projectFaviconUrlAtom } from "./assets";
 import { orchestrationEnvironment } from "./orchestration";
+import { leadThreadKeysFromConfigs, withoutLeadThreads } from "./leadThreadFilter";
 import { environmentProjects } from "./projects";
 import { environmentServerConfigsAtom, serverEnvironment } from "./server";
 import { environmentThreadDetails, environmentThreadShells } from "./threads";
@@ -191,8 +193,16 @@ export function useProjects(): ReadonlyArray<EnvironmentProject> {
   return useAtomValue(environmentProjects.projectsAtom);
 }
 
+/** The server's published lead thread ids, keyed like a scoped thread. */
+export function useLeadThreadKeys(): ReadonlySet<string> {
+  const configs = useAtomValue(environmentServerConfigsAtom);
+  return useMemo(() => leadThreadKeysFromConfigs(configs), [configs]);
+}
+
 export function useThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
-  return useAtomValue(environmentThreadShells.threadShellsAtom);
+  const threads = useAtomValue(environmentThreadShells.threadShellsAtom);
+  const leadThreadKeys = useLeadThreadKeys();
+  return useMemo(() => withoutLeadThreads(threads, leadThreadKeys), [threads, leadThreadKeys]);
 }
 
 /** Thread shells minus those the tag filter hides, for lists that show threads to the user. */
@@ -201,7 +211,9 @@ export function useVisibleThreadShells(): ReadonlyArray<EnvironmentThreadShell> 
 }
 
 export function useNavigationThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
-  return useAtomValue(environmentThreadShells.navigationThreadShellsAtom);
+  const threads = useAtomValue(environmentThreadShells.navigationThreadShellsAtom);
+  const leadThreadKeys = useLeadThreadKeys();
+  return useMemo(() => withoutLeadThreads(threads, leadThreadKeys), [threads, leadThreadKeys]);
 }
 
 export function useProject(ref: ScopedProjectRef | null): EnvironmentProject | null {

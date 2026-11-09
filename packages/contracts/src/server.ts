@@ -648,6 +648,8 @@ export const ServerConfig = Schema.Struct({
   secretReferences: Schema.optionalKey(Schema.Boolean),
   /** A secret request card may be answered with a secret provider reference. */
   secretRequestReferences: Schema.optionalKey(Schema.Boolean),
+  /** Lead RPC methods exist; older servers omit it and clients disable the surface. */
+  projectLead: Schema.optionalKey(Schema.Boolean),
   scratchWorkspaceRoot: Schema.optionalKey(TrimmedNonEmptyString),
   newProjectsRoot: Schema.optionalKey(TrimmedNonEmptyString),
   /**

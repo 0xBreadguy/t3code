@@ -1,6 +1,6 @@
 import { Button } from "../../components/ui/Button";
 import { QuestionAttachments } from "./QuestionAttachments";
-import type { EnvironmentId, RuntimeRequestId } from "@t3tools/contracts";
+import type { EnvironmentId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
 import type { ThreadUserInputQuestion } from "@t3tools/client-runtime/state/thread-requests";
 import {
   markdownProseDirection,
@@ -56,6 +56,12 @@ export interface PendingUserInputCardProps {
   ) => void;
   readonly onSubmit: () => Promise<unknown>;
   readonly onDismiss: () => Promise<unknown>;
+  /** Answers a lead turn from a sheet, which is not the selected thread. */
+  readonly threadTarget?:
+    | { readonly environmentId: EnvironmentId; readonly threadId: ThreadId }
+    | undefined;
+  /** Inline cards render in flow without the collapse bar or its overlay. */
+  readonly collapsible?: boolean;
 }
 
 function proseDirectionStyle(text: string, setDirection: TextDirection | undefined) {
@@ -89,6 +95,7 @@ function QuestionText(props: {
 }
 
 export function PendingUserInputCard(props: PendingUserInputCardProps) {
+  const collapsible = props.collapsible ?? true;
   const questionCount = props.pendingUserInput.questions.length;
   const canRespond = props.pendingUserInput.responseCapability !== "not_resumable";
   const isResponding = props.respondingUserInputId === props.pendingUserInput.requestId;
@@ -137,14 +144,16 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
   const androidBoundsStyle = useAnimatedStyle(() => ({
     paddingTop: cardCoverage.value * cardProgress.value,
   }));
+  const inlineHeightStyle = useAnimatedStyle(() => ({ maxHeight: maxHeight.value }));
   const overlayHeightStyle = useAnimatedStyle(() => ({ height: maxHeight.value }));
 
+  const collapsed = collapsible && props.collapsed;
   const bar = (
     <View
       onLayout={handleBarLayout}
-      pointerEvents={props.collapsed ? "auto" : "none"}
-      accessibilityElementsHidden={!props.collapsed}
-      importantForAccessibility={props.collapsed ? "auto" : "no-hide-descendants"}
+      pointerEvents={collapsed ? "auto" : "none"}
+      accessibilityElementsHidden={!collapsed}
+      importantForAccessibility={collapsed ? "auto" : "no-hide-descendants"}
       className="flex-row items-center gap-2 rounded-full border border-border bg-card-alt py-1.5 pl-4 pr-1.5"
     >
       <Pressable
@@ -184,33 +193,44 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
   const card = (
     <Animated.View
       onLayout={handleCardLayout}
-      pointerEvents={props.collapsed ? "none" : "auto"}
-      accessibilityElementsHidden={props.collapsed}
-      importantForAccessibility={props.collapsed ? "no-hide-descendants" : "auto"}
+      pointerEvents={collapsed ? "none" : "auto"}
+      accessibilityElementsHidden={collapsed}
+      importantForAccessibility={collapsed ? "no-hide-descendants" : "auto"}
       className="overflow-hidden gap-2.5 rounded-[20px] border border-border bg-card-alt p-4"
-      style={cardAnimatedStyle}
+      style={collapsible ? cardAnimatedStyle : inlineHeightStyle}
     >
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Collapse user input"
-        onPress={props.onToggleCollapsed}
-        className="flex-row items-start gap-2"
-      >
+      {collapsible ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Collapse user input"
+          onPress={props.onToggleCollapsed}
+          className="flex-row items-start gap-2"
+        >
+          <View className="flex-1 gap-2.5">
+            <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-foreground-secondary">
+              User input needed
+            </Text>
+            <Text className="font-t3-bold text-lg text-foreground">
+              Fill in the pending answers
+            </Text>
+          </View>
+          <View className="h-8 w-8 items-center justify-center rounded-full bg-subtle-strong">
+            <SymbolView
+              name="chevron.down"
+              size={13}
+              tintColorClassName={"accent-icon-subtle"}
+              type="monochrome"
+            />
+          </View>
+        </Pressable>
+      ) : (
         <View className="flex-1 gap-2.5">
           <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-foreground-secondary">
             User input needed
           </Text>
           <Text className="font-t3-bold text-lg text-foreground">Fill in the pending answers</Text>
         </View>
-        <View className="h-8 w-8 items-center justify-center rounded-full bg-subtle-strong">
-          <SymbolView
-            name="chevron.down"
-            size={13}
-            tintColorClassName={"accent-icon-subtle"}
-            type="monochrome"
-          />
-        </View>
-      </Pressable>
+      )}
       <ScrollView
         bounces={false}
         className="min-h-0"
@@ -300,6 +320,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                     props.onChangeCustomAnswer(props.pendingUserInput.requestId, question.id, value)
                   }
                   onInputFocusChange={props.onInputFocusChange}
+                  threadTarget={props.threadTarget}
                 />
               ) : null}
             </View>
@@ -331,16 +352,20 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
   return (
     <Animated.View
       className="relative"
-      style={Platform.OS === "android" ? androidBoundsStyle : undefined}
+      style={collapsible && Platform.OS === "android" ? androidBoundsStyle : undefined}
     >
-      {bar}
-      <Animated.View
-        pointerEvents={props.collapsed ? "none" : "box-none"}
-        className="absolute inset-x-0 bottom-0 justify-end overflow-hidden"
-        style={overlayHeightStyle}
-      >
-        {card}
-      </Animated.View>
+      {collapsible ? bar : null}
+      {collapsible ? (
+        <Animated.View
+          pointerEvents={props.collapsed ? "none" : "box-none"}
+          className="absolute inset-x-0 bottom-0 justify-end overflow-hidden"
+          style={overlayHeightStyle}
+        >
+          {card}
+        </Animated.View>
+      ) : (
+        card
+      )}
     </Animated.View>
   );
 }

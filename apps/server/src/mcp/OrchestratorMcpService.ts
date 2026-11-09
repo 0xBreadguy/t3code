@@ -1,5 +1,10 @@
 import {
   CommandId,
+  type LeadHandoffInput,
+  type LeadHandoffResult,
+  type LeadRpcError,
+  type LeadStatusInput,
+  type LeadStatusResult,
   type RunId,
   isProviderAvailable,
   MessageId,
@@ -67,6 +72,7 @@ import {
   SECRET_REQUEST_UNSAVED_NOTE,
 } from "@t3tools/contracts";
 import { getProviderOptionCurrentValue, withLegacyUltracodeEffort } from "@t3tools/shared/model";
+import { resolveAgentRoleTarget } from "@t3tools/shared/agentRolePolicy";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import {
@@ -109,6 +115,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as LeadService from "../lead/LeadService.ts";
 import {
   clientModeCeiling,
   type McpInvocationScope,
@@ -163,6 +170,15 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: OrchestratorMcpDelegateTaskInput,
   ) => Effect.Effect<OrchestratorMcpDelegateTaskResult, OrchestratorMcpFailure>;
+  /** Records the caller's structured handoff for its project's lead. Never marks it verified. */
+  readonly leadHandoff: (
+    scope: McpInvocationScope,
+    input: LeadHandoffInput,
+  ) => Effect.Effect<LeadHandoffResult, OrchestratorMcpFailure>;
+  readonly leadStatus: (
+    scope: McpInvocationScope,
+    input: LeadStatusInput,
+  ) => Effect.Effect<LeadStatusResult, OrchestratorMcpFailure>;
   readonly taskStatus: (
     scope: McpInvocationScope,
     taskId: NodeId,
@@ -1024,6 +1040,27 @@ const make = Effect.gen(function* () {
   const gitDriver = yield* GitVcsDriver.GitVcsDriver;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const remoteDelegation = yield* RemoteDelegation.RemoteDelegation;
+  // If a host builds this service without the lead layer, lead tools report unavailable
+  // instead of changing the dependency graph every existing test fixture must satisfy.
+  const leadService = yield* Effect.serviceOption(LeadService.LeadService);
+  const requireLead = () =>
+    Effect.fromOption(leadService, () =>
+      failure("orchestration_error", "This server does not provide the lead service."),
+    );
+
+  const leadFailure = (error: LeadRpcError): OrchestratorMcpFailure => {
+    const code =
+      error.reason === "model_unavailable"
+        ? "model_unavailable"
+        : error.reason === "provider_disabled"
+          ? "provider_unavailable"
+          : error.reason === "thread_not_found" || error.reason === "thread_archived"
+            ? "thread_not_found"
+            : error.reason === "orchestration_error"
+              ? "orchestration_error"
+              : "invalid_request";
+    return new OrchestratorMcpFailure({ code, message: error.message });
+  };
 
   const requireProject = (projectId: ProjectId) =>
     projects.getById(projectId).pipe(
@@ -1333,6 +1370,8 @@ const make = Effect.gen(function* () {
     readonly parent: Pick<OrchestrationV2ThreadProjection, "thread">;
     readonly target: OrchestratorMcpTarget | undefined;
     readonly providers: ReadonlyArray<ServerProvider>;
+    /** The resolved role selection's options replace inherited ones. */
+    readonly optionBaseline?: ReadonlyArray<ProviderOptionSelection> | undefined;
     /** Receipt replays bypass current settings because they start no work. Dispatch must reuse the checked command ID. */
     readonly skipProjectEnablementFilter?: boolean;
   }): Effect.fn.Return<ResolvedTarget, OrchestratorMcpFailure> {
@@ -1437,6 +1476,21 @@ const make = Effect.gen(function* () {
     const descriptors = provider.models.find((candidate) => candidate.slug === model)?.capabilities
       ?.optionDescriptors;
     const requestedOptions = withLegacyUltracodeEffort(descriptors, input.target?.options);
+    const baselineOptions = input.optionBaseline;
+    const invalidOptions =
+      baselineOptions === undefined
+        ? []
+        : invalidOptionSelections(
+            baselineOptions,
+            provider.models.find((candidate) => candidate.slug === model)?.capabilities
+              ?.optionDescriptors,
+          );
+    if (invalidOptions.length > 0) {
+      return yield* failure(
+        "invalid_request",
+        `Model ${model} on provider ${instanceId} rejected configured options: ${invalidOptions.join(" ")}`,
+      );
+    }
     if (requestedOptions !== undefined) {
       const invalid = invalidOptionSelections(requestedOptions, descriptors);
       if (invalid.length > 0) {
@@ -1449,12 +1503,15 @@ const make = Effect.gen(function* () {
 
     const inheritsOptions =
       instanceId === inheritedSelection.instanceId && model === inheritedSelection.model;
-    let options = inheritsOptions
-      ? knownOptions(
-          withLegacyUltracodeEffort(descriptors, inheritedSelection.options),
-          descriptors,
-        )
-      : undefined;
+    let options =
+      baselineOptions !== undefined
+        ? [...baselineOptions]
+        : inheritsOptions
+          ? knownOptions(
+              withLegacyUltracodeEffort(descriptors, inheritedSelection.options),
+              descriptors,
+            )
+          : undefined;
     if (requestedOptions !== undefined) {
       const selections = new Map(
         (requestedOptions.length === 0 ? [] : (options ?? [])).map((selection) => [
@@ -2441,10 +2498,77 @@ const make = Effect.gen(function* () {
         operation: "delegate-task",
       });
       const isRetryOfAcceptedDelegation = yield* threadManagement.hasReceipt(commandId);
+      // An explicit provider/model target wins. Options alone refine the configured
+      // role selection, whose provider/model and option baseline still apply.
+      const hasExplicitModelTarget =
+        input.target?.providerInstanceId !== undefined ||
+        input.target?.driverKind !== undefined ||
+        input.target?.model !== undefined;
+      let roleTarget = input.target;
+      let optionBaseline: ReadonlyArray<ProviderOptionSelection> | undefined;
+      if (input.role !== undefined && !hasExplicitModelTarget) {
+        const settings = yield* serverSettings.getSettings.pipe(
+          Effect.mapError((error) =>
+            failure("orchestration_error", `Unable to read settings: ${error.message}`),
+          ),
+        );
+        const rolePolicy = resolveAgentRoleTarget({
+          settings,
+          projectId: parent.thread.projectId,
+          role: input.role,
+          explicitTarget: false,
+          providers: providers.map((provider) => ({
+            instanceId: provider.instanceId,
+            enabled: provider.enabled,
+            available: isProviderAvailable(provider),
+            models: provider.models,
+          })),
+        });
+        if (rolePolicy.type === "provider_disabled") {
+          const enabledForProject = yield* threadManagement.isProviderInstanceEnabledForProject({
+            projectId: parent.thread.projectId,
+            instanceId: rolePolicy.instanceId,
+          });
+          return yield* failure(
+            "provider_unavailable",
+            enabledForProject
+              ? `The configured ${input.role} provider ${rolePolicy.instanceId} is unavailable.`
+              : `The configured ${input.role} provider ${rolePolicy.instanceId} is disabled for this project.`,
+          );
+        }
+        if (rolePolicy.type === "model_unavailable") {
+          return yield* failure(
+            "model_unavailable",
+            `The configured ${input.role} model ${rolePolicy.model} is not offered by ${rolePolicy.instanceId}.`,
+          );
+        }
+        if (rolePolicy.type === "use") {
+          const selection = rolePolicy.modelSelection;
+          const enabledForProject = yield* threadManagement.isProviderInstanceEnabledForProject({
+            projectId: parent.thread.projectId,
+            instanceId: selection.instanceId,
+          });
+          if (!enabledForProject) {
+            return yield* failure(
+              "provider_unavailable",
+              `The configured ${input.role} provider ${selection.instanceId} is disabled for this project.`,
+            );
+          }
+          roleTarget = {
+            ...input.target,
+            providerInstanceId: selection.instanceId,
+            model: selection.model,
+          };
+          if (selection.options !== undefined || input.target?.options !== undefined) {
+            optionBaseline = selection.options ?? [];
+          }
+        }
+      }
       const target = yield* resolveTargetRechecking({
         parent,
-        target: input.target,
+        target: roleTarget,
         providers,
+        ...(optionBaseline === undefined ? {} : { optionBaseline }),
         skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
       });
       const runtimeMode = yield* resolveRuntimeMode(
@@ -2591,6 +2715,24 @@ const make = Effect.gen(function* () {
           ),
         );
       return yield* readTask(scope, taskId, Option.isNone(waited), true);
+    }),
+    leadHandoff: Effect.fn("OrchestratorMcpService.leadHandoff")(function* (callerScope, input) {
+      yield* requireCapability(callerScope);
+      const scope = yield* requireThreadScope(callerScope, "lead_handoff");
+      const lead = yield* requireLead();
+      return yield* lead
+        .handoff({ callerThreadId: scope.thread.threadId, input })
+        .pipe(Effect.mapError(leadFailure));
+    }),
+    leadStatus: Effect.fn("OrchestratorMcpService.leadStatus")(function* (callerScope, input) {
+      yield* requireCapability(callerScope);
+      const lead = yield* requireLead();
+      return yield* lead
+        .status({
+          callerThreadId: callerScope.thread?.threadId ?? null,
+          projectId: input.projectId,
+        })
+        .pipe(Effect.mapError(leadFailure));
     }),
     taskStatus: Effect.fn("OrchestratorMcpService.taskStatus")(function* (callerScope, taskId) {
       const scope = yield* requireThreadScope(callerScope, "task_status");

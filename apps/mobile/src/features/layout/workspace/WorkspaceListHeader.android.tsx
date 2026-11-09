@@ -12,7 +12,13 @@ import {
   type WorkspaceListHeaderProps,
 } from "./WorkspaceListHeader.types";
 
+import { useOpenLeadSheet } from "../../lead/useOpenLeadSheet";
+import { leadEntryLabel } from "../../lead/leadPresentation";
+import { useLeadAttentionCount } from "../../../state/use-lead-attention";
+
 export function WorkspaceListHeader(props: WorkspaceListHeaderProps) {
+  const lead = useOpenLeadSheet();
+  const leadsNeedingAttention = useLeadAttentionCount();
   const navigation = useNavigation();
   const workspace = useWorkspaceTabs();
   const isTabActive = workspace?.isTabActive;
@@ -74,6 +80,17 @@ export function WorkspaceListHeader(props: WorkspaceListHeaderProps) {
         onOpen: openSearch,
         onClose: closeSearch,
       }}
+      actions={
+        lead.available
+          ? [
+              {
+                accessibilityLabel: leadEntryLabel(leadsNeedingAttention),
+                icon: leadsNeedingAttention > 0 ? "exclamationmark.circle" : "circle.inset.filled",
+                onPress: () => lead.open(),
+              },
+            ]
+          : undefined
+      }
       menus={
         connectionState.hasConnections
           ? [

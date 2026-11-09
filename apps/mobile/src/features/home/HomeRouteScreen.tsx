@@ -14,7 +14,7 @@ import {
   resolveScratchProjectScopeKey,
 } from "@t3tools/client-runtime/state/project-grouping";
 
-import { useProjects } from "../../state/entities";
+import { useLeadThreadKeys, useProjects } from "../../state/entities";
 import { environmentThreadShells } from "../../state/threads";
 import { usePendingNewTasks } from "../../state/use-pending-new-tasks";
 import { useWorkspaceState } from "../../state/workspace";
@@ -34,6 +34,7 @@ import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspace
 import { WorkspaceListEmptyDetail } from "../layout/workspace/WorkspaceListEmptyDetail";
 import { WorkspaceListHeader } from "../layout/workspace/WorkspaceListHeader";
 import { buildHomeListFilterMenuItems } from "./home-list-filter-menu";
+import { withoutLeadThreads } from "../../state/leadThreadFilter";
 
 export function HomeRouteScreen() {
   const nativePrimaryColumn = use(NativePrimaryColumnContext);
@@ -43,9 +44,15 @@ export function HomeRouteScreen() {
   const projects = useProjects();
   // Stop rebuilding the streaming thread list while Thread covers Home.
   const visible = useHomeRouteVisible();
-  const threads = useAtomValueWhileVisible(
+  const rawThreads = useAtomValueWhileVisible(
     environmentThreadShells.navigationThreadShellsAtom,
     visible,
+  );
+  // Lead conversations stay underneath; they are not rows the user browses.
+  const leadThreadKeys = useLeadThreadKeys();
+  const threads = useMemo(
+    () => withoutLeadThreads(rawThreads, leadThreadKeys),
+    [rawThreads, leadThreadKeys],
   );
   const { environments: workspaceEnvironments, state: catalogState } = useWorkspaceState();
   const { savedConnectionsById } = useSavedRemoteConnections();

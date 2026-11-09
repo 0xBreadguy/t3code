@@ -15,6 +15,7 @@ import {
   effectiveShortcutsForCommand,
   formatShortcutLabel,
   isRichTextBoldShortcut,
+  isRichTextItalicShortcut,
   isTerminalNewShortcut,
   isTerminalSplitShortcut,
   resolveChatShortcutCommand,
@@ -104,6 +105,7 @@ function compile(bindings: TestBinding[]): ResolvedKeybindingsConfig {
 
 const DEFAULT_BINDINGS = compile([
   { shortcut: modShortcut("b"), command: "sidebar.toggle" },
+  { shortcut: modShortcut("i"), command: "lead.toggle" },
   { shortcut: modShortcut("j"), command: "terminal.toggle" },
   { shortcut: modShortcut("b", { altKey: true }), command: "rightPanel.toggle" },
   {
@@ -763,6 +765,27 @@ describe("isRichTextBoldShortcut", () => {
     const modB = event({ key: "b", metaKey: true });
     assert.isFalse(isRichTextBoldShortcut(modB, { isCollapsed: true }));
     assert.isFalse(isRichTextBoldShortcut(modB, null));
+  });
+});
+
+describe("isRichTextItalicShortcut", () => {
+  const selected = { isCollapsed: false };
+
+  it("matches Mod+I only with selected text", () => {
+    assert.isTrue(isRichTextItalicShortcut(event({ key: "i", metaKey: true }), selected));
+    assert.isFalse(
+      isRichTextItalicShortcut(event({ key: "i", metaKey: true }), { isCollapsed: true }),
+    );
+    assert.isFalse(isRichTextItalicShortcut(event({ key: "i", metaKey: true }), null));
+  });
+
+  it("leaves the chord to the lead toggle when no text is selected", () => {
+    const modI = event({ key: "i", metaKey: true });
+    assert.strictEqual(
+      resolveShortcutCommand(modI, DEFAULT_BINDINGS, { platform: "MacIntel" }),
+      "lead.toggle",
+    );
+    assert.isFalse(isRichTextItalicShortcut(modI, { isCollapsed: true }));
   });
 });
 

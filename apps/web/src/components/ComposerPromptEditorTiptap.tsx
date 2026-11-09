@@ -80,6 +80,7 @@ import {
   ComposerBoldExtension,
   ComposerItalicExtension,
   ComposerStrikeExtension,
+  ComposerItalicSelectionOnlyExtension,
   ComposerTaskItemExtension,
   ComposerTaskListExtension,
   flatToMarkdown,
@@ -782,6 +783,7 @@ function createComposerExtensions(richText: boolean) {
           ComposerItalicExtension,
           ComposerBoldExtension,
           ComposerStrikeExtension,
+          ComposerItalicSelectionOnlyExtension,
           ComposerCodeExtension,
           ComposerCodeBlockExtension.extend({
             addNodeView() {

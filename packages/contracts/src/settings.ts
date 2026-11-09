@@ -33,6 +33,12 @@ import {
   ProviderOptionSelections,
 } from "./model.ts";
 import { ModelSelection } from "./modelSelection.ts";
+import {
+  AgentRoleModelSelectionPatch,
+  AgentRoleModelSelections,
+  ProjectLeadConfig,
+  ProjectLeadConfigPatch,
+} from "./lead.ts";
 import { ProjectScript, type ProjectMutation } from "./project.ts";
 import { DEFAULT_RUNTIME_MODE, RuntimeMode } from "./providerPolicy.ts";
 import { BrowserProfile, BrowserProfileId, DEFAULT_BROWSER_PROFILE_ID } from "./browserProfile.ts";
@@ -1085,6 +1091,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "enableAgentBrowserAccess",
   "enableAgentDeviceAccess",
   "textGenerationModelSelection",
+  "agentRoleModels",
   "threadTitleInstructions",
   "sourceControlWriterModelSelection",
   "reviewGuideModelSelection",
@@ -1123,6 +1130,8 @@ export const ProjectSettingsOverrides = Schema.Struct({
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   enableAgentDeviceAccess: Schema.optionalKey(Schema.Boolean),
   textGenerationModelSelection: Schema.optionalKey(ModelSelection),
+  /** Sparse role map; absent roles inherit the environment map. */
+  agentRoleModels: Schema.optionalKey(AgentRoleModelSelections),
   threadTitleInstructions: Schema.optionalKey(TrimmedString),
   sourceControlWriterModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   reviewGuideModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
@@ -1319,6 +1328,12 @@ export const ServerSettings = Schema.Struct({
   ),
   defaultModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  /** Environment-wide role policy. Project overrides are sparse and inherit from here. */
+  agentRoleModels: AgentRoleModelSelections.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  /** One lead binding per project. Absent projects have no lead and no routing change. */
+  projectLeadConfigs: Schema.Record(ProjectId, ProjectLeadConfig).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
   ),
   fallbackModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
@@ -1788,6 +1803,16 @@ export const ServerSettingsPatch = Schema.Struct({
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   ghqCloneLayout: Schema.optionalKey(Schema.Boolean),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
+  /** Merges per role under the settings write lock; null clears one role. */
+  agentRoleModels: Schema.optionalKey(AgentRoleModelSelectionPatch),
+  /** merges per project role under the lock; null clears every project role override. */
+  projectAgentRoleModels: Schema.optionalKey(
+    Schema.Record(ProjectId, Schema.NullOr(AgentRoleModelSelectionPatch)),
+  ),
+  /** Merges per project under the lock; null removes a project's lead binding. */
+  projectLeadConfigs: Schema.optionalKey(
+    Schema.Record(ProjectId, Schema.NullOr(ProjectLeadConfigPatch)),
+  ),
   threadTitleInstructions: Schema.optionalKey(TrimmedString),
   branchNamingMode: Schema.optionalKey(BranchNamingMode),
   branchNamePrefix: Schema.optionalKey(TrimmedString),

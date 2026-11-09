@@ -10,6 +10,10 @@ import {
   type WorkspaceListHeaderProps,
 } from "./WorkspaceListHeader.types";
 
+import { useOpenLeadSheet } from "../../lead/useOpenLeadSheet";
+import { leadEntryLabel } from "../../lead/leadPresentation";
+import { useLeadAttentionCount } from "../../../state/use-lead-attention";
+
 export function WorkspaceListHeader(props: WorkspaceListHeaderProps) {
   return props.sidebar ? <SidebarColumnHeader {...props} sidebar={props.sidebar} /> : null;
 }
@@ -20,6 +24,8 @@ function SidebarColumnHeader(
   },
 ) {
   const { search, sidebar } = props;
+  const lead = useOpenLeadSheet();
+  const leadsNeedingAttention = useLeadAttentionCount();
   const searchBarRef = useRef<SearchBarCommands>(null);
   useHardwareKeyboardCommand("focusSearch", () => {
     const focus = () => searchBarRef.current?.focus();
@@ -40,6 +46,13 @@ function SidebarColumnHeader(
       items: props.filter.items,
     },
     onOpenSettings: props.onOpenSettings,
+    lead: lead.available
+      ? {
+          label: leadEntryLabel(leadsNeedingAttention),
+          needsAttention: leadsNeedingAttention > 0,
+          onPress: () => lead.open(),
+        }
+      : undefined,
   });
 
   return (

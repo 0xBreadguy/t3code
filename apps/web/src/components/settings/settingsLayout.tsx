@@ -312,6 +312,7 @@ export function SettingsRow({
   serverScoped = false,
   settingKeys = EMPTY_SETTING_KEYS,
   managedPaths = EMPTY_MANAGED_PATHS,
+  environmentWide: environmentWideOverride,
   mixed: mixedOverride,
   managed,
   children,
@@ -328,6 +329,8 @@ export function SettingsRow({
   settingKeys?: readonly (keyof ServerSettings)[];
   /** Dot paths inside a setting, such as `storageCleanup.logsAfterDays`, an administrator can lock. */
   managedPaths?: readonly string[];
+  /** Rows with their own inheritance readback set this because they pass no setting keys. */
+  environmentWide?: boolean;
   mixed?: boolean;
   /** Why an administrator's policy turns this row's control off, from the contract's denial helpers. */
   managed?: string | undefined;
@@ -368,7 +371,8 @@ export function SettingsRow({
   const isProjectScope =
     context !== null && (context.scope.kind === "project" || context.scope.kind === "checkout");
   const scopedKeys = settingKeys.filter(isProjectScopedSettingKey);
-  const environmentWide = isProjectScope && serverScoped && scopedKeys.length === 0;
+  const environmentWide =
+    environmentWideOverride ?? (isProjectScope && serverScoped && scopedKeys.length === 0);
   const mixed =
     mixedOverride ?? (context !== null && scopedSettingsAreMixed(context.targets, settingKeys));
   const source =

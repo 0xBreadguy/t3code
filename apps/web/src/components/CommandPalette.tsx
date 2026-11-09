@@ -59,6 +59,7 @@ import {
   ChartNoAxesColumnIcon,
   CheckIcon,
   ChevronRightIcon,
+  CircleDotIcon,
   CornerLeftUpIcon,
   FileSearchIcon,
   FolderGit2Icon,
@@ -140,6 +141,7 @@ import {
   waitForProject,
 } from "../state/entities";
 import { visibleLinkedThreads } from "@t3tools/client-runtime/state/threads";
+import { useLeadUiStore } from "./lead/leadUiStore";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
 import {
   appendBrowsePathSegment,
@@ -1258,6 +1260,38 @@ function OpenCommandPaletteDialog(props: {
   };
 
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
+
+  const leadScope =
+    currentProjectEnvironmentId !== null && currentProjectId !== null
+      ? {
+          environmentId: currentProjectEnvironmentId,
+          projectId: currentProjectId,
+        }
+      : null;
+  const leadProjectTitle =
+    leadScope === null
+      ? null
+      : (projectByKey.get(`${leadScope.environmentId}:${leadScope.projectId}`)?.title ?? null);
+  actionItems.push({
+    kind: "action",
+    value: "action:ask-lead",
+    searchTerms: [
+      "lead",
+      "coordinator",
+      "ask",
+      "decisions",
+      "ownership",
+      "roles",
+      "hand over",
+      "review pending work",
+    ],
+    title: leadProjectTitle ? `Ask the ${leadProjectTitle} lead` : "Ask the lead",
+    icon: <CircleDotIcon className={ITEM_ICON_CLASS} />,
+    shortcutCommand: "lead.toggle",
+    run: async () => {
+      useLeadUiStore.getState().openLead(leadScope);
+    },
+  });
 
   if (projects.length > 0) {
     const activeProjectTitle =
