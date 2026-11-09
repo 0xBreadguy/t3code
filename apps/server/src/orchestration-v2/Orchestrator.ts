@@ -2666,21 +2666,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     >,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
   ) {
-    const projection = yield* projectionStore
-      .getThreadRecords(
-        command.parentThreadId,
-        ["subagents", "runs", "nodes", "attempts", "turnItems"],
-        { turnItemTypes: [] },
-      )
-      .pipe(
-        Effect.mapError(
-          (cause) =>
-            new OrchestratorProjectionError({
-              threadId: command.parentThreadId,
-              cause,
-            }),
-        ),
-      );
+    const projection = yield* loadProjectionForCommand(command, ["subagents"], {
+      subagentIds: [command.taskId],
+    });
     const task = projection.subagents.find(
       (candidate) => candidate.id === command.taskId && candidate.origin === "app_owned",
     );
@@ -2697,6 +2685,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         : "disposed";
     const now = yield* DateTime.now;
     const emitEvent = emit(events, command);
+    const {
+      runs: [parentRun],
+    } = yield* loadProjectionForCommand(command, ["runs"], {
+      runIds: task.runId === null ? [] : [task.runId],
+    });
     // A late wait can arrive after finalization held the result for its still-live spawning run.
     if (isUnobservedAcknowledgement(command)) {
       if (
@@ -2704,23 +2697,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         task.completionDelivery?.state !== "pending"
       )
         return;
-      const parentRun = projection.runs.find((run) => run.id === task.runId);
       if (parentRun !== undefined && isLiveRun(parentRun)) return;
-      const records = yield* projectionStore
-        .getThreadRecords(command.parentThreadId, ["messages", "providerTurns"], {
-          messageRoles: ["user"],
-        })
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new OrchestratorProjectionError({
-                threadId: command.parentThreadId,
-                cause,
-              }),
-          ),
-        );
+      const records = yield* loadProjectionForCommand(
+        command,
+        ["runs", "subagents", "messages", "providerTurns"],
+        { messageRoles: ["user"] },
+      );
       const plan = yield* planDelegatedCompletionDelivery({
-        parentProjection: { ...projection, ...records },
+        parentProjection: records,
         parentRun,
         task,
         updatedTask: task,
@@ -2790,10 +2774,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       payload: updatedTask,
     });
 
-    const parentRun =
-      task.runId === null
-        ? undefined
-        : projection.runs.find((candidate) => candidate.id === task.runId);
     const cohort = parentRun?.delegatedCompletion;
     const delivery = cohort?.delivery;
     if (
@@ -2808,17 +2788,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return;
     }
 
-    const { messages } = yield* projectionStore
-      .getThreadRecords(command.parentThreadId, ["messages"], {
-        messageRoles: ["user"],
-        messageIds: [delivery.messageId],
-      })
-      .pipe(
-        Effect.mapError(
-          (cause) => new OrchestratorProjectionError({ threadId: command.parentThreadId, cause }),
-        ),
-      );
-    const deliveryProjection = { ...projection, messages };
+    const { messages } = yield* loadProjectionForCommand(command, ["messages"], {
+      messageRoles: ["user"],
+      messageIds: [delivery.messageId],
+    });
+    const deliveryRunId = completionDeliveryMessage({ messages }, delivery)?.runId ?? null;
+    const { runs } = yield* loadProjectionForCommand(command, ["runs"], {
+      runIds: deliveryRunId === null ? [] : [deliveryRunId],
+    });
+    const deliveryProjection = { messages, runs };
     const remainingTaskIds = delivery.taskIds.filter((taskId) => taskId !== task.id);
     const deliveryRun = completionDeliveryRun(deliveryProjection, delivery);
     const clearDelivery =
@@ -2851,7 +2829,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* emitQueuedRunCancellation({
           command,
           events,
-          projection,
+          projection: yield* loadProjectionForCommand(command, ["nodes", "attempts"], {
+            nodeIds: deliveryRun.rootNodeId === null ? [] : [deliveryRun.rootNodeId],
+          }),
           run: deliveryRun,
           now,
         });
@@ -2859,6 +2839,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       const message = completionDeliveryMessage(deliveryProjection, delivery);
       if (message !== undefined) {
+        const { subagents: remainingTasks } = yield* loadProjectionForCommand(
+          command,
+          ["subagents"],
+          { subagentIds: remainingTaskIds },
+        );
         yield* emitEvent({
           type: "message.updated",
           threadId: command.parentThreadId,
@@ -2868,7 +2853,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           occurredAt: now,
           payload: {
             ...message,
-            text: delegatedCompletionWakeDetail(remainingTaskIds, projection.subagents),
+            text: delegatedCompletionWakeDetail(remainingTaskIds, remainingTasks),
             delegatedCompletion: {
               parentRunId: parentRun.id,
               generation: delivery.generation,
