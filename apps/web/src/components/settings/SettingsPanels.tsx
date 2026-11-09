@@ -710,11 +710,13 @@ export function useSettingsRestore(onRestored?: () => void) {
     });
     // This write alone restores tips, so the event follows the save, like the Tips switch.
     if (tipsTurnedOn) {
-      void persistClientSettingsUpdate((current) => ({ ...current, newThreadTipsEnabled: true }))
-        .then(() =>
-          recordTipEvent(tipEventEnvironmentId([readPrimaryEnvironmentId()]), { event: "enabled" }),
-        )
-        .catch(() => undefined);
+      persistClientSettingsUpdate((current) => ({ ...current, newThreadTipsEnabled: true })).then(
+        () =>
+          void recordTipEvent(tipEventEnvironmentId([readPrimaryEnvironmentId()]), {
+            event: "enabled",
+          }),
+        () => toastManager.add({ type: "error", title: "Could not save the tips setting" }),
+      );
     }
     onRestored?.();
   };
