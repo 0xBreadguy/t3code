@@ -50,7 +50,12 @@ export function evaluatePullRequestWatch(
   let passed = headMoved ? false : watch.passed;
   let passedChecks = headMoved ? [] : watch.passedChecks;
   let owedChecks = headMoved ? [] : (watch.owedChecks ?? []);
+  // A new head without checks waits for them only where the host always reports some.
+  let checksPending = headMoved
+    ? detail.capabilities.checksAlwaysReport === true
+    : (watch.checksPending ?? true);
   if (detail.checks.length > 0) {
+    checksPending = detail.checks.some((check) => check.status === "pending");
     const failed = detail.checks.filter(isFailedCheck);
     const newlyFailed = failed.filter((check) => !failedChecks.includes(check.name));
     if (newlyFailed.length > 0) changes.push({ kind: "checks-failed", failed: newlyFailed });
@@ -104,6 +109,7 @@ export function evaluatePullRequestWatch(
     if (awaitedMs >= PULL_REQUEST_WATCH_NO_CHECKS_MS) {
       changes.push({ kind: "no-checks", minutes: Math.round(awaitedMs / 60_000) });
       checksAwaitedSince = null;
+      checksPending = false;
     }
   }
 
@@ -153,6 +159,7 @@ export function evaluatePullRequestWatch(
       conflicting,
       wakes,
       checksAwaitedSince,
+      checksPending,
     },
     exhausted: commentsOnly && wakes >= PULL_REQUEST_WATCH_WAKE_LIMIT,
   };
