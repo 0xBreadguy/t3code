@@ -27,6 +27,7 @@ export const LEAD_OWNERSHIP_ACTION_LABELS: Record<LeadOwnershipAction, string> =
 export type LeadSheetStatusKind =
   | "needs-update"
   | "offline"
+  | "needs-you"
   | "writing"
   | "owns-project"
   | "owns-batch"
@@ -42,6 +43,7 @@ export interface LeadSheetStatus {
 export function deriveLeadSheetStatus(input: {
   readonly capability: LeadCapability;
   readonly online: boolean;
+  readonly needsYou: boolean;
   readonly running: boolean;
   readonly ownership: LeadOwnershipGrant | null;
   readonly reportsToReview: number;
@@ -50,6 +52,7 @@ export function deriveLeadSheetStatus(input: {
     return { kind: "needs-update", label: "Needs update" };
   }
   if (!input.online) return { kind: "offline", label: "Offline" };
+  if (input.needsYou) return { kind: "needs-you", label: "Needs you" };
   if (input.running) return { kind: "writing", label: "Writing…" };
   const ownership = input.ownership;
   if (ownership !== null && ownership.revokedAt === null) {
@@ -103,8 +106,9 @@ export function formatLeadRoleModel(selection: ModelSelection | undefined): stri
 }
 
 export const LEAD_ROLE_UNSET_COPY =
-  "No Lead role model set. Sending starts the lead with this project's default model. " +
-  "Set the Lead role in Roles settings in the web or desktop app.";
+  "No Lead role model set. Sending asks the server to use this project's default model; " +
+  "if the project has none, the send fails until you set the Lead role in Roles settings " +
+  "on the web or desktop app.";
 
 /** What the sheet says about the model that will run the lead. */
 export function leadModelSummary(input: {
@@ -135,6 +139,26 @@ export function leadRoleRows(
     const selection = roleModels[role];
     return selection === undefined ? [] : [{ role, model: formatModelSlugName(selection.model) }];
   });
+}
+
+/** A configured role can come from the project or the environment, never a global sync. */
+export function leadRoleSource(input: {
+  readonly role: string;
+  readonly projectRoles: AgentRoleModelSelections | undefined;
+  readonly environmentRoles: AgentRoleModelSelections | undefined;
+}): "project" | "environment" | null {
+  if (input.projectRoles?.[input.role] !== undefined) return "project";
+  if (input.environmentRoles?.[input.role] !== undefined) return "environment";
+  return null;
+}
+
+/** Home and header entries know only that some configured lead thread needs you. */
+export function leadEntryLabel(threadsNeedingAttention: number): string {
+  if (threadsNeedingAttention === 1) return "Lead, 1 thread needs you";
+  if (threadsNeedingAttention > 1) {
+    return `Lead, ${threadsNeedingAttention} threads need you`;
+  }
+  return "Lead";
 }
 
 export function formatReportedChecks(checks: ReadonlyArray<LeadReportedCheck>): string | null {

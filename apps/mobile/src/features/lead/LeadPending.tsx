@@ -21,7 +21,7 @@ import { useDerivedValue } from "react-native-reanimated";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import type { PendingUserInput } from "../../lib/threadActivity";
-import { leadEnvironment } from "../../state/lead";
+import { leadEnvironment, leadErrorMessage, unwrapLeadResult } from "../../state/lead";
 import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { PendingApprovalCard } from "../threads/PendingApprovalCard";
@@ -60,6 +60,7 @@ export function LeadPending(props: {
     reportFailure: false,
   });
   const [respondingApprovalId, setRespondingApprovalId] = useState<RuntimeRequestId | null>(null);
+  const [approvalError, setApprovalError] = useState<string | null>(null);
 
   if (threadRef === null || pending === null) return null;
   const approvals = pending.approvals;
@@ -72,12 +73,20 @@ export function LeadPending(props: {
   ) => {
     if (!canOperate) return;
     setRespondingApprovalId(requestId);
-    const result = await respondToApproval({
-      environmentId: threadRef.environmentId,
-      input: { threadId: threadRef.threadId, requestId, decision },
-    });
+    setApprovalError(null);
+    try {
+      unwrapLeadResult(
+        await respondToApproval({
+          environmentId: threadRef.environmentId,
+          input: { threadId: threadRef.threadId, requestId, decision },
+        }),
+      );
+    } catch (error) {
+      setApprovalError(
+        leadErrorMessage(error, "Couldn't send that decision. The request is still waiting."),
+      );
+    }
     setRespondingApprovalId((current) => (current === requestId ? null : current));
-    return result;
   };
 
   return (
@@ -94,26 +103,35 @@ export function LeadPending(props: {
           onRespond={onRespondToApproval}
         />
       ))}
+      {approvalError !== null ? (
+        <Text accessibilityRole="alert" className="text-xs text-danger-foreground">
+          {approvalError}
+        </Text>
+      ) : null}
       {activeInput !== null ? (
         <LeadUserInput
-          key={activeInput.requestId}
+          key={`${threadRef.environmentId}:${threadRef.threadId}:${activeInput.requestId}`}
           threadRef={threadRef}
           canOperate={canOperate}
           pendingUserInput={activeInput}
           remaining={pending.userInputs.length}
           onSubmit={async (requestId, answers) => {
             if (!canOperate) return;
-            await respondToUserInput({
-              environmentId: threadRef.environmentId,
-              input: { threadId: threadRef.threadId, requestId, answers },
-            });
+            unwrapLeadResult(
+              await respondToUserInput({
+                environmentId: threadRef.environmentId,
+                input: { threadId: threadRef.threadId, requestId, answers },
+              }),
+            );
           }}
           onDismiss={async (requestId) => {
             if (!canOperate) return;
-            await dismissUserInput({
-              environmentId: threadRef.environmentId,
-              input: { threadId: threadRef.threadId, requestId },
-            });
+            unwrapLeadResult(
+              await dismissUserInput({
+                environmentId: threadRef.environmentId,
+                input: { threadId: threadRef.threadId, requestId },
+              }),
+            );
           }}
         />
       ) : null}
@@ -136,6 +154,7 @@ function LeadUserInput(props: {
   const maxHeight = useDerivedValue(() => Math.min(260, height * 0.28));
   const [drafts, setDrafts] = useState<Record<string, PendingUserInputDraftAnswer>>({});
   const [responding, setResponding] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const seeded = seedUserInputDraftAnswers(props.pendingUserInput.questions, drafts);
   const answers = buildPendingUserInputAnswers(props.pendingUserInput.questions, seeded);
@@ -189,12 +208,36 @@ function LeadUserInput(props: {
         onSubmit={async () => {
           if (answers === null || !props.canOperate) return;
           setResponding(true);
-          await props
-            .onSubmit(props.pendingUserInput.requestId, answers)
-            .finally(() => setResponding(false));
+          setError(null);
+          try {
+            await props.onSubmit(props.pendingUserInput.requestId, answers);
+          } catch (submitError) {
+            setError(
+              leadErrorMessage(
+                submitError,
+                "Couldn't send the answers. The question is still waiting.",
+              ),
+            );
+          }
+          setResponding(false);
         }}
-        onDismiss={() => props.onDismiss(props.pendingUserInput.requestId)}
+        onDismiss={async () => {
+          if (!props.canOperate) return;
+          setError(null);
+          try {
+            await props.onDismiss(props.pendingUserInput.requestId);
+          } catch (dismissError) {
+            setError(
+              leadErrorMessage(dismissError, "Couldn't dismiss the question. It is still waiting."),
+            );
+          }
+        }}
       />
+      {error !== null ? (
+        <Text accessibilityRole="alert" className="text-xs text-danger-foreground">
+          {error}
+        </Text>
+      ) : null}
       {props.remaining > 1 ? (
         <Text className="text-xs text-foreground-muted">
           {props.remaining} questions waiting. Answering this one shows the next.

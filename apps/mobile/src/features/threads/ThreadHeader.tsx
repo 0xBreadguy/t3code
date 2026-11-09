@@ -7,7 +7,9 @@ import type { ThreadInspectorMode } from "./thread-inspector-content-stack";
 import { useThreadHeaderOptions } from "./useThreadHeaderOptions";
 import { useWorkspaceBackNavigation } from "../workspace/useAndroidWorkspaceNavigation";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
+import { leadEntryLabel } from "../lead/leadPresentation";
 import { useOpenLeadSheet } from "../lead/useOpenLeadSheet";
+import { useLeadAttentionCount } from "../../state/use-lead-attention";
 
 export function ThreadHeader(
   props: Parameters<typeof useThreadHeaderOptions>[0] & {
@@ -25,13 +27,14 @@ export function ThreadHeader(
     useAdaptiveWorkspaceLayout();
   const { onOpenTerminal, onMergeBack, environmentId, threadId } = props.gitControls;
   const { available: leadAvailable, open: openLead } = useOpenLeadSheet();
+  const leadsNeedingAttention = useLeadAttentionCount();
   const native = useThreadHeaderOptions(props);
   const androidHeaderActions = useMemo<ReadonlyArray<AppBarAction>>(() => {
     const actions: AppBarAction[] = [];
     if (leadAvailable && String(environmentId).length > 0 && String(threadId).length > 0) {
       actions.push({
-        accessibilityLabel: "Lead",
-        icon: "circle.inset.filled",
+        accessibilityLabel: leadEntryLabel(leadsNeedingAttention),
+        icon: leadsNeedingAttention > 0 ? "exclamationmark.circle" : "circle.inset.filled",
         onPress: () => openLead({ environmentId, threadId }),
       });
     }
@@ -86,6 +89,7 @@ export function ThreadHeader(
     environmentId,
     threadId,
     leadAvailable,
+    leadsNeedingAttention,
     openLead,
   ]);
 

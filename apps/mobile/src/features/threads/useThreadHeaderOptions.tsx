@@ -1,6 +1,8 @@
 import { useWorkspaceSidebarHeaderItem } from "../layout/useWorkspaceSidebarHeaderItem";
 import { StackActions, useNavigation } from "@react-navigation/native";
+import { leadEntryLabel } from "../lead/leadPresentation";
 import { useOpenLeadSheet } from "../lead/useOpenLeadSheet";
+import { useLeadAttentionCount } from "../../state/use-lead-attention";
 import { threadHeaderAppearance } from "./thread-header-appearance";
 import { isDuoDevice } from "../../lib/device-type";
 import type { AppNativeStackNavigationOptions } from "../../native/StackHeader";
@@ -32,6 +34,7 @@ export function useThreadHeaderOptions(props: {
   const { layout, startNewTask } = useAdaptiveWorkspaceLayout();
   const sidebarHeaderItem = useWorkspaceSidebarHeaderItem();
   const openLeadSheet = useOpenLeadSheet();
+  const leadsNeedingAttention = useLeadAttentionCount();
   const { environmentId, threadId } = props.gitControls;
   const canOpenLead =
     openLeadSheet.available &&
@@ -40,8 +43,11 @@ export function useThreadHeaderOptions(props: {
     props.draft !== true;
   // The lead is summoned from the worker it is asked about, not from a tab.
   const leadHeaderItem = withNativeGlassHeaderItem({
-    accessibilityLabel: "Lead",
-    icon: { name: "circle.inset.filled", type: "sfSymbol" as const },
+    accessibilityLabel: leadEntryLabel(leadsNeedingAttention),
+    icon: {
+      name: leadsNeedingAttention > 0 ? "exclamationmark.circle" : "circle.inset.filled",
+      type: "sfSymbol" as const,
+    },
     identifier: "thread-right-lead",
     label: "Lead",
     onPress: () => openLeadSheet.open({ environmentId, threadId }),
@@ -126,6 +132,7 @@ export function useThreadHeaderOptions(props: {
       compactRightHeaderItems,
       usesDuoHeader,
       canOpenLead,
+      leadsNeedingAttention,
       environmentId,
       threadId,
       gitStatus?.isDefaultRef,

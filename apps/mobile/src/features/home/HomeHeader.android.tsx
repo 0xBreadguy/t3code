@@ -1,7 +1,9 @@
 import type { MenuAction } from "@react-native-menu/menu";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { AndroidHeaderIconButton } from "../../components/ui/AndroidScreenHeader";
+import { leadEntryLabel } from "../lead/leadPresentation";
 import { useOpenLeadSheet } from "../lead/useOpenLeadSheet";
+import { useLeadAttentionCount } from "../../state/use-lead-attention";
 import { ThreadListToolbar } from "./ThreadListToolbar";
 import type { HomeHeaderProps } from "./HomeHeader.types";
 
@@ -13,6 +15,7 @@ function checkedMenuState(checked: boolean) {
 
 export function HomeHeader(props: HomeHeaderProps) {
   const openLeadSheet = useOpenLeadSheet();
+  const leadsNeedingAttention = useLeadAttentionCount();
   const hasCustomListOptions =
     props.selectedEnvironmentId !== null || props.selectedProjectKey !== null;
   const menuActions: MenuAction[] = [
@@ -98,8 +101,8 @@ export function HomeHeader(props: HomeHeaderProps) {
         leadAction={
           openLeadSheet.available ? (
             <AndroidHeaderIconButton
-              accessibilityLabel="Lead"
-              icon="circle.inset.filled"
+              accessibilityLabel={leadEntryLabel(leadsNeedingAttention)}
+              icon={leadsNeedingAttention > 0 ? "exclamationmark.circle" : "circle.inset.filled"}
               onPress={() => openLeadSheet.open()}
             />
           ) : undefined

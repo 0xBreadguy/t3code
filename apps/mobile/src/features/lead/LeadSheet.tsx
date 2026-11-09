@@ -4,7 +4,13 @@ import {
   type LeadContinuity,
 } from "@t3tools/client-runtime/lead/scope";
 import type { LeadPageContext } from "@t3tools/client-runtime/lead/context";
-import { EnvironmentId, ProjectId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  ThreadId,
+  type AgentRoleModelSelections,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useAtomValue } from "@effect/atom-react";
@@ -21,7 +27,7 @@ import { ScreenContent } from "../../components/ui/ScreenContent";
 import { SheetHeader } from "../../components/ui/SheetHeader";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useEnvironments } from "../../state/environments";
-import { useProject, useProjects, useThreadShell } from "../../state/entities";
+import { useProject, useProjects, useQuietThreadShell, useThreadShell } from "../../state/entities";
 import { leadEnvironment } from "../../state/lead";
 import { openSettings } from "../settings/settings-navigation";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
@@ -30,7 +36,14 @@ import { LeadConversation } from "./LeadConversation";
 import { LeadPending } from "./LeadPending";
 import { LeadWork } from "./LeadWork";
 import { setRetainedLeadScope, useRetainedLeadScope } from "./leadScopeState";
-import { deriveLeadSheetStatus, leadModelSummary, leadRoleRows } from "./leadPresentation";
+import {
+  deriveLeadSheetStatus,
+  leadModelSummary,
+  leadRoleRows,
+  leadRoleSource,
+} from "./leadPresentation";
+import { useLeadSheetContentHeight } from "./leadSheetLayout";
+import { useLeadLiveState } from "./useLeadLiveState";
 import { leadThreadRef, useLeadRunning, useLeadSession } from "./useLeadSession";
 
 export type LeadSheetParams = {
@@ -43,6 +56,7 @@ export function LeadSheet({ route }: StaticScreenProps<LeadSheetParams>) {
   const navigation = useNavigation();
   const { layout } = useAdaptiveWorkspaceLayout();
   const params = route.params ?? {};
+  const { presentationById } = useEnvironments();
   const environmentId = params.environmentId ? EnvironmentId.make(params.environmentId) : null;
   const threadId = params.threadId ? ThreadId.make(params.threadId) : null;
   const paramProjectId = params.projectId ? ProjectId.make(params.projectId) : null;
@@ -84,6 +98,7 @@ export function LeadSheet({ route }: StaticScreenProps<LeadSheetParams>) {
   const canWriteSettings = useAtomValue(
     leadEnvironment.grant.permissionAtom(scope?.environmentId ?? null),
   );
+  const sheetLayout = useLeadSheetContentHeight();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [sentThread, setSentThread] = useState<{
     readonly scopeKey: string;
@@ -95,13 +110,35 @@ export function LeadSheet({ route }: StaticScreenProps<LeadSheetParams>) {
     sentThread !== null && sentThread.scopeKey === scopeKey ? sentThread.threadId : null;
   const threadRef = leadThreadRef(scope, session.data, pendingThreadId);
   const running = useLeadRunning(threadRef);
+  const leadShell = useQuietThreadShell(threadRef);
+  const needsYou =
+    leadShell !== null && (leadShell.hasPendingApprovals || leadShell.hasPendingUserInput);
+  const live = useLeadLiveState(scope, session.data);
+  const liveData =
+    session.data === null
+      ? null
+      : {
+          ...session.data,
+          state: live.state,
+          pendingHandoffCount: live.pendingHandoffCount,
+        };
   const status = deriveLeadSheetStatus({
     capability: session.capability,
     online: session.online,
+    needsYou,
     running,
-    ownership: session.data?.state?.ownership ?? null,
-    reportsToReview: session.data?.pendingHandoffCount ?? 0,
+    ownership: live.state?.ownership ?? null,
+    reportsToReview: live.pendingHandoffCount,
   });
+  const settings =
+    scope === null
+      ? null
+      : (presentationById.get(scope.environmentId)?.serverConfig?.settings ?? null);
+  const projectRoleModels: AgentRoleModelSelections | undefined =
+    scope === null
+      ? undefined
+      : settings?.projectSettingsOverrides[scope.projectId]?.agentRoleModels;
+  const environmentRoleModels: AgentRoleModelSelections | undefined = settings?.agentRoleModels;
   const capabilityReason =
     scope === null
       ? null
@@ -201,17 +238,19 @@ export function LeadSheet({ route }: StaticScreenProps<LeadSheetParams>) {
               emptyCopy={
                 capabilityReason !== null
                   ? "The lead isn't available here yet. Your draft stays here."
-                  : session.data === null || session.data.binding === null
-                    ? `Ask about work in ${projectLabel}. The lead watches what workers hand back. ` +
-                      "It won't merge, open PRs or change code unless you hand it ownership."
-                    : session.data.state == null || session.data.state.handoffs.length === 0
+                  : liveData === null || liveData.binding === null
+                    ? `Ask about work in ${projectLabel}. The lead observes and recommends. ` +
+                      "It acts on what you ask here; broader or unattended work needs you to hand over ownership."
+                    : liveData.state == null || liveData.state.handoffs.length === 0
                       ? "Nothing handed back yet. Workers report here when they finish."
                       : "Ask the lead what to do next."
               }
               header={
                 <LeadWorkHeader
                   scope={scope}
-                  session={session}
+                  data={liveData}
+                  projectRoleModels={projectRoleModels}
+                  environmentRoleModels={environmentRoleModels}
                   projectLabel={projectLabel}
                   capabilityReason={capabilityReason}
                   canSend={canOperate && session.online}
@@ -255,14 +294,16 @@ export function LeadSheet({ route }: StaticScreenProps<LeadSheetParams>) {
   }
 
   return (
-    <View collapsable={false} className="flex-1 bg-sheet">
+    <View collapsable={false} className="flex-1 bg-sheet" onLayout={sheetLayout.onLayout}>
       <NativeStackScreenOptions options={{ sheetCornerRadius: 28 }} />
-      <AndroidSheetHeader
-        title={`${scope === null ? "Project" : projectLabel} lead`}
-        subtitle={scope === null ? "Pick a project" : status.label}
-        leading={<IconButton accessibilityLabel="Close lead" icon="xmark" onPress={close} />}
-      />
-      <ScreenContent insetHorizontal={layout.usesSplitView}>{body}</ScreenContent>
+      <View style={{ height: sheetLayout.height }} className="bg-sheet">
+        <AndroidSheetHeader
+          title={`${scope === null ? "Project" : projectLabel} lead`}
+          subtitle={scope === null ? "Pick a project" : status.label}
+          leading={<IconButton accessibilityLabel="Close lead" icon="xmark" onPress={close} />}
+        />
+        <ScreenContent insetHorizontal={layout.usesSplitView}>{body}</ScreenContent>
+      </View>
     </View>
   );
 }
@@ -409,7 +450,9 @@ function LeadProjectPicker(props: {
 
 function LeadWorkHeader(props: {
   readonly scope: { readonly environmentId: EnvironmentId; readonly projectId: ProjectId };
-  readonly session: ReturnType<typeof useLeadSession>;
+  readonly data: ReturnType<typeof useLeadSession>["data"];
+  readonly projectRoleModels: AgentRoleModelSelections | undefined;
+  readonly environmentRoleModels: AgentRoleModelSelections | undefined;
   readonly projectLabel: string;
   readonly capabilityReason: string | null;
   readonly canSend: boolean;
@@ -418,7 +461,7 @@ function LeadWorkHeader(props: {
   readonly onOpenThread: (ref: ScopedThreadRef) => void;
 }) {
   const [rolesOpen, setRolesOpen] = useState(false);
-  const data = props.session.data;
+  const data = props.data;
   const roles = data === null ? [] : leadRoleRows(data.roleModels);
   if (data === null) return null;
   return (
@@ -443,20 +486,28 @@ function LeadWorkHeader(props: {
         {rolesOpen ? (
           <>
             <Text className="text-2xs text-foreground-muted">
-              Environment role defaults. Project overrides apply when work launches.
+              Effective roles for this project on this environment.
             </Text>
-            {roles.map((role) => (
-              <Text key={role.role} className="text-xs text-foreground-secondary">
-                {`${role.role}: ${role.model}`}
-              </Text>
-            ))}
+            {roles.map((role) => {
+              const source = leadRoleSource({
+                role: role.role,
+                projectRoles: props.projectRoleModels,
+                environmentRoles: props.environmentRoleModels,
+              });
+              return (
+                <Text key={role.role} className="text-xs text-foreground-secondary">
+                  {`${role.role}: ${role.model}${source === null ? "" : ` · ${source === "project" ? "Project role" : "Environment role"}`}`}
+                </Text>
+              );
+            })}
             <Text className="text-2xs text-foreground-muted">
               If a role's model isn't available, T3 asks before launching. It never swaps models
               silently. A model you pick for one task wins for that task. Subagents a provider
               starts on its own may not follow these roles.
             </Text>
             <Text className="text-2xs text-foreground-muted">
-              Edit roles in Settings on desktop or web.
+              Roles are saved per environment and aren't synced across them. Edit roles in Settings
+              on desktop or web.
             </Text>
           </>
         ) : null}

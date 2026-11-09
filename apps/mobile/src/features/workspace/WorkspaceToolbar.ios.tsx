@@ -18,6 +18,8 @@ import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 import { useFloatingWorkspaceTabs, useSidebarWorkspaceTabs } from "./useSystemWorkspaceTabBar";
 import { WorkspaceTabToolbarButtons } from "./WorkspaceSectionToolbar";
+import { useLeadAttentionCount } from "../../state/use-lead-attention";
+import { leadEntryLabel } from "../lead/leadPresentation";
 import { useOpenLeadSheet } from "../lead/useOpenLeadSheet";
 
 const SEARCH_LABELS = {
@@ -33,6 +35,7 @@ export function WorkspaceToolbar(props: {
   const workspace = useWorkspaceTabs()!;
   const activeNewTask = useActiveNewTask();
   const openLeadSheet = useOpenLeadSheet();
+  const leadsNeedingAttention = useLeadAttentionCount();
   const deviceType = useDeviceType();
   const sidebarTabs = useSidebarWorkspaceTabs();
   const floatingTabs = useFloatingWorkspaceTabs();
@@ -190,8 +193,8 @@ export function WorkspaceToolbar(props: {
           {nativeToolbarCompose && foldedSearch ? <Toolbar.Spacer width={8} /> : null}
           {openLeadSheet.available && selectedTab === "threads" && !workspace.settingsOpen ? (
             <Toolbar.Button
-              accessibilityLabel="Lead"
-              icon="circle.inset.filled"
+              accessibilityLabel={leadEntryLabel(leadsNeedingAttention)}
+              icon={leadsNeedingAttention > 0 ? "exclamationmark.circle" : "circle.inset.filled"}
               onPress={() => openLeadSheet.open()}
             />
           ) : null}

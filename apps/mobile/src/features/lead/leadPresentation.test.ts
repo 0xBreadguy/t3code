@@ -7,8 +7,10 @@ import {
   deriveLeadSheetStatus,
   formatReportedChecks,
   leadComposerAvailability,
+  leadEntryLabel,
   leadModelSummary,
   leadRoleRows,
+  leadRoleSource,
   ownershipSummary,
 } from "./leadPresentation";
 
@@ -41,6 +43,7 @@ describe("lead sheet status", () => {
   const base = {
     capability: supported,
     online: true,
+    needsYou: false,
     running: false,
     ownership: null,
     reportsToReview: 0,
@@ -53,6 +56,10 @@ describe("lead sheet status", () => {
       "owns-project",
     );
     expect(deriveLeadSheetStatus({ ...base, running: true }).kind).toBe("writing");
+    expect(deriveLeadSheetStatus({ ...base, needsYou: true }).kind).toBe("needs-you");
+    expect(deriveLeadSheetStatus({ ...base, needsYou: true, running: true }).label).toBe(
+      "Needs you",
+    );
     expect(deriveLeadSheetStatus({ ...base, online: false }).kind).toBe("offline");
     expect(deriveLeadSheetStatus({ ...base, capability: unsupported, online: false }).kind).toBe(
       "needs-update",
@@ -144,6 +151,30 @@ describe("lead model and report presentation", () => {
       { role: "lead", model: "Claude Opus 5.5" },
       { role: "implementation", model: "GPT-5" },
     ]);
+  });
+
+  it("names the source of an effective role", () => {
+    expect(
+      leadRoleSource({
+        role: "lead",
+        projectRoles: { lead: { instanceId: "claude" as never, model: "opus" } },
+        environmentRoles: { lead: { instanceId: "claude" as never, model: "sonnet" } },
+      }),
+    ).toBe("project");
+    expect(
+      leadRoleSource({
+        role: "lead",
+        projectRoles: {},
+        environmentRoles: { lead: { instanceId: "claude" as never, model: "sonnet" } },
+      }),
+    ).toBe("environment");
+    expect(leadRoleSource({ role: "lead", projectRoles: {}, environmentRoles: {} })).toBeNull();
+  });
+
+  it("counts lead threads that need you, never requests it cannot see", () => {
+    expect(leadEntryLabel(0)).toBe("Lead");
+    expect(leadEntryLabel(1)).toBe("Lead, 1 thread needs you");
+    expect(leadEntryLabel(3)).toBe("Lead, 3 threads need you");
   });
 
   it("renders reported checks as plain text and names ownership terms", () => {
