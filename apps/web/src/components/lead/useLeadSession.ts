@@ -85,9 +85,9 @@ export function useLeadSession(
   return {
     capability,
     online,
-    data: isCurrent ? state.data : null,
+    data: capability.kind === "supported" && isCurrent ? state.data : null,
     loading,
-    error: isCurrent ? state.error : null,
+    error: capability.kind === "supported" && isCurrent ? state.error : null,
     refresh: () => setRefreshKey((value) => value + 1),
   };
 }

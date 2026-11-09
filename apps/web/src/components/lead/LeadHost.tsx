@@ -142,6 +142,7 @@ export function LeadHost() {
       wasOpen.current = false;
       const target = returnFocus.current;
       if (restoreFocusTarget(target)) target?.focus();
+      else document.querySelector<HTMLElement>("[data-lead-button]")?.focus();
       returnFocus.current = null;
     }
   }, [open, presentation]);
