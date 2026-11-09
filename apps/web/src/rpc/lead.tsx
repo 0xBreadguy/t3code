@@ -62,8 +62,7 @@ export function LeadBackendHost({ children }: { readonly children: ReactNode }) 
     capability: (environmentId) => {
       const config = serverConfigs.get(environmentId);
       if (config?.projectLead === true) {
-        // Text-only until LeadSendInput accepts context refs.
-        return { kind: "supported", contextRefs: false } satisfies LeadCapability;
+        return { kind: "supported", contextRefs: true } satisfies LeadCapability;
       }
       return {
         kind: "unsupported",

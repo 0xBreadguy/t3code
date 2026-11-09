@@ -15,7 +15,6 @@ import type {
   LeadSendResult,
   LeadState,
   LeadThreadSummary,
-  OrchestrationMessageContext,
   ProjectLeadConfig,
 } from "@t3tools/contracts";
 
@@ -39,9 +38,9 @@ export type {
 };
 
 /**
- * Capability is the only client-side gate. `contextRefs` stays false until the
- * server accepts LeadSendInput.context; the composer then says the message is
- * text-only instead of pretending a chip was sent.
+ * Capability is the only client-side gate. `contextRefs` follows the server's
+ * optional LeadSendInput.context support; false keeps chips out of the message
+ * rather than sending decorative ones.
  */
 export type LeadCapability =
   | {
@@ -73,9 +72,7 @@ export interface LeadTransport {
   ) => Promise<LeadAuthorityResult>;
 }
 
-/** Forward-compatible with the pending optional context field on lead.send. */
-export interface LeadSendRequest extends LeadSendInput {
-  readonly context?: OrchestrationMessageContext;
-}
+/** Alias kept for call sites that distinguish a send request from its result. */
+export type LeadSendRequest = LeadSendInput;
 
 export type LeadBackend = LeadTransport;

@@ -24,6 +24,10 @@ The lead observes and recommends by default. **Hand over authority** is a delibe
 
 Lead and other agent roles use the environment's role models with project overrides. A configured model that is unavailable fails the launch instead of silently using another model. Role editing is not part of this lead surface in this build; provider-native subagents a provider starts on its own may not follow the same roles.
 
+## Context
+
+The lead receives semantic context chips, not a screenshot or a reading of your screen. On a thread page it attaches the current thread; you can remove a chip and re-attach it before sending. The chips attached to a sent message stay visible under that message. A chip that points at another machine is marked unreadable and must be removed before sending. File and diff-selection chips appear only where the page already exposes that selection.
+
 ## Limits
 
-Lead conversations are hidden from the sidebar, thread counts, and thread switcher. They remain reachable through the lead surfaces. If a server predates the lead, the surface says it needs an update and keeps your draft. This version sends lead messages as text; context chips appear once the server accepts them.
+Lead conversations are hidden from the sidebar, thread counts, and thread switcher. They remain reachable through the lead surfaces. If a server predates the lead, the surface says it needs an update and keeps your draft.
