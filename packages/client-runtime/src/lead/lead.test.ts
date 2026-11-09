@@ -167,7 +167,7 @@ describe("lead button status", () => {
     scopeLabel: "atlas-web",
     environmentLabel: "studio-mac",
     needsYouCount: 0,
-    decisionsCount: 0,
+    reportsToReviewCount: 0,
     grantActive: false,
     unreadReply: false,
     offline: false,
@@ -183,11 +183,11 @@ describe("lead button status", () => {
   it("orders needs-you ahead of ownership and decisions", () => {
     const status = deriveLeadButtonStatus({
       connectedEnvironmentCount: 1,
-      scopes: [{ ...base, needsYouCount: 2, decisionsCount: 3, grantActive: true }],
+      scopes: [{ ...base, needsYouCount: 2, reportsToReviewCount: 3, grantActive: true }],
     });
     expect(status.label).toBe("Lead, needs your approval");
     expect(status.needsYouCount).toBe(2);
-    expect(status.decisionsCount).toBe(3);
+    expect(status.reportsToReviewCount).toBe(3);
   });
 
   it("names ownership, decisions, offline and unread states", () => {
@@ -200,9 +200,9 @@ describe("lead button status", () => {
     expect(
       deriveLeadButtonStatus({
         connectedEnvironmentCount: 1,
-        scopes: [{ ...base, decisionsCount: 1 }],
+        scopes: [{ ...base, reportsToReviewCount: 1 }],
       }).label,
-    ).toBe("Lead, 1 decision waiting");
+    ).toBe("Lead, 1 report to review");
     expect(
       deriveLeadButtonStatus({
         connectedEnvironmentCount: 1,

@@ -61,7 +61,7 @@ export function useLeadSession(
     }
     let cancelled = false;
     backend
-      .read({ projectId })
+      .read(environmentId, { projectId })
       .then((data) => {
         if (!cancelled) setState({ requestKey, data, error: null });
       })

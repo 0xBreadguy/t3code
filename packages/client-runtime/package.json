@@ -367,6 +367,10 @@
       "types": "./src/state/threadRequests.ts",
       "default": "./src/state/threadRequests.ts"
     },
+    "./state/lead-commands": {
+      "types": "./src/state/leadCommands.ts",
+      "default": "./src/state/leadCommands.ts"
+    },
     "./state/thread-workflows": {
       "types": "./src/state/threadWorkflows.ts",
       "default": "./src/state/threadWorkflows.ts"

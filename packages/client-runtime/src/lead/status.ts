@@ -5,7 +5,7 @@ export interface LeadScopeStatus {
   readonly scopeLabel: string;
   readonly environmentLabel: string;
   readonly needsYouCount: number;
-  readonly decisionsCount: number;
+  readonly reportsToReviewCount: number;
   readonly grantActive: boolean;
   readonly unreadReply: boolean;
   readonly offline: boolean;
@@ -14,7 +14,7 @@ export interface LeadScopeStatus {
 export interface LeadButtonStatus {
   readonly visible: boolean;
   readonly needsYouCount: number;
-  readonly decisionsCount: number;
+  readonly reportsToReviewCount: number;
   readonly grantActive: boolean;
   readonly offlineEnvironments: ReadonlyArray<string>;
   readonly unreadReply: boolean;
@@ -32,7 +32,7 @@ export function deriveLeadButtonStatus(input: {
 }): LeadButtonStatus {
   const visible = input.connectedEnvironmentCount > 0;
   const needsYouCount = sum(input.scopes.map((scope) => scope.needsYouCount));
-  const decisionsCount = sum(input.scopes.map((scope) => scope.decisionsCount));
+  const reportsToReviewCount = sum(input.scopes.map((scope) => scope.reportsToReviewCount));
   const grantScope = input.scopes.find((scope) => scope.grantActive) ?? null;
   const grantActive = grantScope !== null;
   const offlineEnvironments = unique(
@@ -43,7 +43,7 @@ export function deriveLeadButtonStatus(input: {
   return {
     visible,
     needsYouCount,
-    decisionsCount,
+    reportsToReviewCount,
     grantActive,
     offlineEnvironments,
     unreadReply,
@@ -51,7 +51,7 @@ export function deriveLeadButtonStatus(input: {
     label: leadButtonLabel({
       visible,
       needsYouCount,
-      decisionsCount,
+      reportsToReviewCount,
       grantActive,
       scopeLabel,
       offlineEnvironments,
@@ -68,10 +68,10 @@ function leadButtonLabel(input: Omit<LeadButtonStatus, "label">): string {
       ? "Lead, owns a batch"
       : `Lead, owns a batch in ${input.scopeLabel}`;
   }
-  if (input.decisionsCount > 0) {
-    return input.decisionsCount === 1
-      ? "Lead, 1 decision waiting"
-      : `Lead, ${input.decisionsCount} decisions waiting`;
+  if (input.reportsToReviewCount > 0) {
+    return input.reportsToReviewCount === 1
+      ? "Lead, 1 report to review"
+      : `Lead, ${input.reportsToReviewCount} reports to review`;
   }
   if (input.offlineEnvironments.length === 1) {
     return `Lead, ${input.offlineEnvironments[0]} offline`;

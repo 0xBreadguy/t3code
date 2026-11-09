@@ -1,6 +1,7 @@
 import { CommandId } from "@t3tools/contracts";
 import type {
   LeadAuthorityResult,
+  LeadHandoff,
   LeadOwnershipAction,
   LeadReadResult,
 } from "@t3tools/client-runtime/rpc/lead";
@@ -9,6 +10,7 @@ import { useState } from "react";
 
 import { newMessageId, randomUUID } from "../../lib/utils";
 import { useLeadBackend } from "../../rpc/lead";
+import { useThreadShell } from "../../state/entities";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 
@@ -22,6 +24,40 @@ const REVIEW_PENDING_TEXT =
   "Review the work handed back since I last looked. Summarize what each worker reported, " +
   "which checks are only reported rather than verified, and recommend what to combine. " +
   "Don't merge or open a PR unless I hand you ownership.";
+
+function LeadHandoffReport({
+  handoff,
+  environmentId,
+}: {
+  readonly handoff: LeadHandoff;
+  readonly environmentId: LeadScope["environmentId"];
+}) {
+  const shell = useThreadShell({
+    environmentId,
+    threadId: handoff.sourceThreadId,
+  });
+  const checks = handoff.checks.map((check) => `${check.name} ${check.outcome}`).join(" · ");
+  return (
+    <div className="rounded-md border border-border/60 px-2 py-1.5" data-lead-handoff="">
+      <div className="flex items-center justify-between gap-2">
+        <span className="truncate text-xs font-medium text-foreground">
+          {shell?.title?.trim() || "Worker report"}
+        </span>
+        <span className="shrink-0 text-3xs text-muted-foreground">Review required</span>
+      </div>
+      <p className="mt-0.5 line-clamp-3 text-2xs text-muted-foreground">{handoff.summary}</p>
+      {checks.length > 0 ? (
+        <p className="mt-0.5 truncate text-3xs text-muted-foreground">Reports: {checks}</p>
+      ) : (
+        <p className="mt-0.5 text-3xs text-muted-foreground">No checks reported.</p>
+      )}
+      <p className="mt-0.5 text-3xs text-muted-foreground/70">
+        {handoff.head === null ? "No head reported" : `Head ${handoff.head.slice(0, 7)}`} · not
+        merged · review required
+      </p>
+    </div>
+  );
+}
 
 /**
  * Durable handoff and ownership records. A grant needs this explicit user
@@ -57,19 +93,19 @@ export function LeadWork({
   const run = async (action: () => Promise<LeadAuthorityResult | void>) => {
     setBusy(true);
     setError(null);
-    try {
-      await action();
-      onChanged();
-    } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : "That didn't work.");
-    } finally {
-      setBusy(false);
-    }
+    const failure = await action()
+      .then(() => null)
+      .catch((actionError: unknown) =>
+        actionError instanceof Error ? actionError : new Error("That didn't work."),
+      );
+    if (failure === null) onChanged();
+    else setError(failure.message);
+    setBusy(false);
   };
 
   const reviewPending = () =>
     run(async () => {
-      await backend.send({
+      await backend.send(scope.environmentId, {
         projectId: scope.projectId,
         commandId: CommandId.make(randomUUID()),
         messageId: newMessageId(),
@@ -80,7 +116,7 @@ export function LeadWork({
   const grant = () =>
     run(async () => {
       if (actions.length === 0) return;
-      await backend.grant({
+      await backend.grant(scope.environmentId, {
         projectId: scope.projectId,
         expectedRevision: revision,
         scope: { type: "project" },
@@ -92,7 +128,7 @@ export function LeadWork({
   const takeBack = () =>
     run(async () => {
       if (activeGrant === null) return;
-      await backend.revoke({
+      await backend.revoke(scope.environmentId, {
         projectId: scope.projectId,
         expectedRevision: revision,
         grantId: activeGrant.id,
@@ -120,6 +156,10 @@ export function LeadWork({
           </Button>
         </div>
       ) : null}
+
+      {data?.state?.handoffs.slice(-3).map((handoff) => (
+        <LeadHandoffReport key={handoff.id} handoff={handoff} environmentId={scope.environmentId} />
+      ))}
 
       {activeGrant !== null ? (
         <div className="space-y-1.5 rounded-md border border-border/70 px-2 py-1.5">

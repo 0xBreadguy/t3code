@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { workspaceAreaProps } from "../../lib/workspaceFocus";
 import { useEnvironments } from "../../state/environments";
-import { useProject, useProjects, useThreadProjection } from "../../state/entities";
+import { useProject, useProjects, useQuietThreadProjection } from "../../state/entities";
 import { useEnvironmentScope } from "../../state/session";
 import { LeadPanel } from "./LeadPanel";
 import { useLeadPage } from "./useLeadPage";
@@ -112,7 +112,7 @@ export function LeadHost() {
     scope === null || leadThread === null
       ? null
       : { environmentId: scope.environmentId, threadId: leadThread.threadId };
-  const projection = useThreadProjection(bindingRef);
+  const projection = useQuietThreadProjection(bindingRef);
   const running =
     projection?.projection.runs.some((run) => RUNNING_STATUSES.has(run.status)) ?? false;
   const previousRunning = useRef(false);

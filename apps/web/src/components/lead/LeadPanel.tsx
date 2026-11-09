@@ -1,7 +1,7 @@
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import type { LeadContinuity, LeadScope } from "@t3tools/client-runtime/lead/scope";
 import type { LeadReadResult } from "@t3tools/client-runtime/rpc/lead";
-import { useThreadProjection, useProject } from "../../state/entities";
+import { useQuietThreadProjection, useProject } from "../../state/entities";
 import { useEnvironment } from "../../state/environments";
 import { LeadComposer } from "./LeadComposer";
 import { LeadContinuityBar } from "./LeadContinuityBar";
@@ -19,7 +19,7 @@ function useLeadRunning(scope: LeadScope, data: LeadReadResult | null): boolean 
     data?.thread === null || data?.thread === undefined
       ? null
       : { environmentId: scope.environmentId, threadId: data.thread.threadId };
-  const projection = useThreadProjection(threadRef);
+  const projection = useQuietThreadProjection(threadRef);
   return projection?.projection.runs.some((run) => RUNNING_STATUSES.has(run.status)) ?? false;
 }
 
@@ -29,6 +29,7 @@ function leadStatusLabel(input: {
   readonly running: boolean;
   readonly ownershipActive: boolean;
   readonly ownershipScope: "project" | "threads" | null;
+  readonly reportsToReview: number;
 }): string {
   if (input.capabilityReason !== null) return "Needs update";
   if (!input.online) return "Offline";
@@ -36,6 +37,7 @@ function leadStatusLabel(input: {
   if (input.ownershipActive) {
     return input.ownershipScope === "project" ? "Owns project" : "Owns batch";
   }
+  if (input.reportsToReview > 0) return "Reports to review";
   return "Observing";
 }
 
@@ -82,6 +84,7 @@ export function LeadPanel({
     running,
     ownershipActive,
     ownershipScope: ownership?.scope.type ?? null,
+    reportsToReview: data?.pendingHandoffCount ?? 0,
   });
   const threadRef =
     data?.thread === null || data?.thread === undefined
@@ -138,10 +141,10 @@ export function LeadPanel({
         threadRef={threadRef}
         className="min-h-0 flex-1 overflow-y-auto px-3 py-2"
         emptyCopy={
-          data?.binding === null
+          data === null || data.binding === null
             ? `Ask about work in ${projectLabel}. The lead watches what workers hand back. ` +
               "It won't merge, open PRs or change code unless you hand it ownership."
-            : data?.state == null || data.state.handoffs.length === 0
+            : data.state == null || data.state.handoffs.length === 0
               ? "Nothing handed back yet. Workers report here when they finish."
               : "Ask the lead what to do next."
         }
@@ -158,6 +161,7 @@ export function LeadPanel({
         capabilityReason={capabilityReason}
         running={running}
         projectLabel={projectLabel}
+        contextEnabled={session.capability.kind === "supported" && session.capability.contextRefs}
         onSent={onChanged}
       />
     </div>

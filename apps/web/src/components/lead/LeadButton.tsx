@@ -60,7 +60,7 @@ export function LeadButton({ className }: { readonly className?: string }) {
               scopeLabel: project?.title ?? "this project",
               environmentLabel: environment.label ?? "this environment",
               needsYouCount: 0,
-              decisionsCount: pendingHandoffs,
+              reportsToReviewCount: pendingHandoffs,
               grantActive,
               unreadReply: unreadScopeKeys.includes(leadScopeKey(scope)),
               offline: !environment.online,
@@ -102,9 +102,9 @@ export function LeadButton({ className }: { readonly className?: string }) {
               <Badge size="sm" variant="warning">
                 {status.needsYouCount}
               </Badge>
-            ) : status.decisionsCount > 0 ? (
+            ) : status.reportsToReviewCount > 0 ? (
               <Badge size="sm" variant="secondary">
-                {status.decisionsCount}
+                {status.reportsToReviewCount}
               </Badge>
             ) : null}
             {status.unreadReply ? (

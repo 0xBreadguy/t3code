@@ -3,7 +3,6 @@ import {
   togglePendingUserInputOptionSelection,
   type PendingUserInputDraftAnswer,
 } from "@t3tools/client-runtime/state/pending-user-input";
-import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import {
   derivePendingThreadRequests,
   seedUserInputDraftAnswers,
@@ -65,17 +64,11 @@ export function LeadPending({ threadRef }: { readonly threadRef: ScopedThreadRef
   const onApproval = async (requestId: RuntimeRequestId, decision: ProviderApprovalDecision) => {
     if (!canOperate) return;
     setResponding((current) => (current.includes(requestId) ? current : [...current, requestId]));
-    try {
-      const result = await respondToApproval({
-        environmentId: threadRef.environmentId,
-        input: { threadId: threadRef.threadId, requestId, decision },
-      });
-      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-        throw new Error("Couldn't answer the lead's approval.");
-      }
-    } finally {
-      setResponding((current) => current.filter((id) => id !== requestId));
-    }
+    await respondToApproval({
+      environmentId: threadRef.environmentId,
+      input: { threadId: threadRef.threadId, requestId, decision },
+    });
+    setResponding((current) => current.filter((id) => id !== requestId));
   };
 
   const onAdvance = () => {

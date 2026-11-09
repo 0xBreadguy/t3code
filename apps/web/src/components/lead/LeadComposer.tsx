@@ -25,6 +25,7 @@ export function LeadComposer({
   capabilityReason,
   running,
   projectLabel,
+  contextEnabled,
   onSent,
 }: {
   readonly scope: LeadScope;
@@ -33,6 +34,7 @@ export function LeadComposer({
   readonly capabilityReason: string | null;
   readonly running: boolean;
   readonly projectLabel: string;
+  readonly contextEnabled: boolean;
   readonly onSent: () => void;
 }) {
   const backend = useLeadBackend();
@@ -42,7 +44,7 @@ export function LeadComposer({
   const setText = useLeadDraftStore((state) => state.setText);
   const clearOnSend = useLeadDraftStore((state) => state.clearOnSend);
   const canOperate = useEnvironmentScope(scope.environmentId, AuthOrchestrationOperateScope);
-  const { unreadable } = useLeadComposerContext(scope, page);
+  const { records, unreadable } = useLeadComposerContext(scope, page);
   const interruptTurn = useOrchestrationCommand(threadEnvironment.interruptTurn, {
     reportFailure: false,
   });
@@ -55,26 +57,36 @@ export function LeadComposer({
     capabilityReason ??
     (canOperate ? null : "You don't have permission to message this environment.");
   const canSend =
-    disabledReason === null && text.trim().length > 0 && unreadable.length === 0 && !sending;
+    disabledReason === null &&
+    text.trim().length > 0 &&
+    (!contextEnabled || unreadable.length === 0) &&
+    !sending;
 
   const send = async () => {
     if (!canSend) return;
     setSending(true);
     setError(null);
-    try {
-      await backend.send({
+    const failure = await backend
+      .send(scope.environmentId, {
         projectId: scope.projectId,
         commandId: CommandId.make(randomUUID()),
         messageId: newMessageId(),
         text: text.trim(),
-      });
+        ...(contextEnabled && records.length > 0
+          ? { context: { version: 1 as const, records } }
+          : {}),
+      })
+      .then(() => null)
+      .catch((sendError: unknown) =>
+        sendError instanceof Error ? sendError : new Error("Couldn't send to the lead."),
+      );
+    if (failure === null) {
       clearOnSend(scope);
       onSent();
-    } catch (sendError) {
-      setError(sendError instanceof Error ? sendError.message : "Couldn't send to the lead.");
-    } finally {
-      setSending(false);
+    } else {
+      setError(failure.message);
     }
+    setSending(false);
   };
 
   const stop = async () => {
@@ -82,21 +94,23 @@ export function LeadComposer({
     if (threadId === undefined) return;
     setStopping(true);
     setError(null);
-    try {
-      const result = await interruptTurn({
-        environmentId: scope.environmentId,
-        input: { threadId },
-      });
-      if (result._tag === "Failure") setError("Couldn't stop the lead's reply.");
-      else onSent();
-    } finally {
-      setStopping(false);
-    }
+    const result = await interruptTurn({
+      environmentId: scope.environmentId,
+      input: { threadId },
+    });
+    if (result._tag === "Failure") setError("Couldn't stop the lead's reply.");
+    else onSent();
+    setStopping(false);
   };
 
   return (
     <div className="border-t border-border/70 px-3 py-2.5" data-lead-composer="">
-      <LeadContextBar scope={scope} page={page} />
+      {contextEnabled ? <LeadContextBar scope={scope} page={page} /> : null}
+      {contextEnabled ? null : (
+        <p className="text-3xs text-muted-foreground">
+          Context attachments need a newer server; this message includes only text.
+        </p>
+      )}{" "}
       <div className="mt-2 flex items-end gap-2">
         <Textarea
           value={text}
@@ -134,7 +148,7 @@ export function LeadComposer({
           </Button>
         )}
       </div>
-      {unreadable.length > 0 ? (
+      {contextEnabled && unreadable.length > 0 ? (
         <p className="mt-1.5 text-2xs text-destructive-foreground">
           Remove the context from another machine before sending.
         </p>

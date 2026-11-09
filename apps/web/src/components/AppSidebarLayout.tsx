@@ -25,8 +25,7 @@ import {
   shortcutLabelForCommand,
 } from "../keybindings";
 import { LeadHost } from "./lead/LeadHost";
-import { LeadBackendProvider } from "../rpc/lead";
-import { unavailableLeadBackend } from "@t3tools/client-runtime/rpc/lead";
+import { LeadBackendHost } from "../rpc/lead";
 import { useLeadPresentation } from "./lead/useLeadPresentation";
 import { useLeadUiStore } from "./lead/leadUiStore";
 import { isEditableFocused } from "../lib/editableFocus";
@@ -477,7 +476,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
 
   return (
     <PanelAnimationSuppressionProvider value={panelAnimationsSuppressed}>
-      <LeadBackendProvider backend={unavailableLeadBackend}>
+      <LeadBackendHost>
         <SidebarProvider
           className="h-dvh! min-h-0!"
           data-panel-animations={routePanelAnimationsActive ? "true" : "false"}
@@ -513,7 +512,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           <SidebarControl />
           {isElectron ? <HistorySwipeNavigation /> : null}
         </SidebarProvider>
-      </LeadBackendProvider>
+      </LeadBackendHost>
     </PanelAnimationSuppressionProvider>
   );
 }
