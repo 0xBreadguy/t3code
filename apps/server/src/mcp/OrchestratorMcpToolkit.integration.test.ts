@@ -703,6 +703,12 @@ describe("orchestrator MCP toolkit", () => {
             const resultItemId = finalProjection.turnItems.find(
               (item) => item.runId === queuedFollowup.runId && item.type === "assistant_message",
             )?.id;
+            yield* invoke("t3_thread_read", {
+              threadId: delegated.childThreadId,
+              itemId: resultItemId,
+              textOffset: result.length,
+            });
+            expect(yield* deliveryState).toBe("claimed");
             let textOffset: number | null = 0;
             const pages: Array<string> = [];
             while (textOffset !== null) {
