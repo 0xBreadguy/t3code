@@ -1290,6 +1290,8 @@ const make = Effect.gen(function* () {
     readonly parent: Pick<OrchestrationV2ThreadProjection, "thread">;
     readonly target: OrchestratorMcpTarget | undefined;
     readonly providers: ReadonlyArray<ServerProvider>;
+    /** The resolved role selection's options replace inherited ones. */
+    readonly optionBaseline?: ReadonlyArray<ProviderOptionSelection> | undefined;
     /** Receipt replays bypass current settings because they start no work. Dispatch must reuse the checked command ID. */
     readonly skipProjectEnablementFilter?: boolean;
   }): Effect.fn.Return<ResolvedTarget, OrchestratorMcpFailure> {
@@ -1392,6 +1394,21 @@ const make = Effect.gen(function* () {
     }
 
     const requestedOptions = input.target?.options;
+    const baselineOptions = input.optionBaseline;
+    const invalidOptions =
+      baselineOptions === undefined
+        ? []
+        : invalidOptionSelections(
+            baselineOptions,
+            provider.models.find((candidate) => candidate.slug === model)?.capabilities
+              ?.optionDescriptors,
+          );
+    if (invalidOptions.length > 0) {
+      return yield* failure(
+        "invalid_request",
+        `Model ${model} on provider ${instanceId} rejected configured options: ${invalidOptions.join(" ")}`,
+      );
+    }
     if (requestedOptions !== undefined) {
       const descriptors = provider.models.find((candidate) => candidate.slug === model)
         ?.capabilities?.optionDescriptors;
@@ -1406,7 +1423,14 @@ const make = Effect.gen(function* () {
 
     const inheritsOptions =
       instanceId === inheritedSelection.instanceId && model === inheritedSelection.model;
-    let options = inheritsOptions ? inheritedSelection.options : undefined;
+    let options =
+      baselineOptions !== undefined
+        ? [...baselineOptions]
+        : inheritsOptions
+          ? inheritedSelection.options === undefined
+            ? undefined
+            : [...inheritedSelection.options]
+          : undefined;
     if (requestedOptions !== undefined) {
       const selections = new Map(
         (requestedOptions.length === 0 ? [] : (options ?? [])).map((selection) => [
@@ -2261,14 +2285,14 @@ const make = Effect.gen(function* () {
         operation: "delegate-task",
       });
       const isRetryOfAcceptedDelegation = yield* threadManagement.hasReceipt(commandId);
-      // An explicit task target wins. Otherwise a configured role model routes this
-      // child deterministically in the destination project, with no substitution.
+      // An explicit provider/model target wins. Options alone refine the configured
+      // role selection, whose provider/model and option baseline still apply.
       const hasExplicitModelTarget =
         input.target?.providerInstanceId !== undefined ||
         input.target?.driverKind !== undefined ||
-        input.target?.model !== undefined ||
-        input.target?.options !== undefined;
+        input.target?.model !== undefined;
       let roleTarget = input.target;
+      let optionBaseline: ReadonlyArray<ProviderOptionSelection> | undefined;
       if (input.role !== undefined && !hasExplicitModelTarget) {
         const settings = yield* serverSettings.getSettings.pipe(
           Effect.mapError((error) =>
@@ -2321,14 +2345,17 @@ const make = Effect.gen(function* () {
             ...input.target,
             providerInstanceId: selection.instanceId,
             model: selection.model,
-            ...(selection.options === undefined ? {} : { options: [...selection.options] }),
           };
+          if (selection.options !== undefined || input.target?.options !== undefined) {
+            optionBaseline = selection.options ?? [];
+          }
         }
       }
       const target = yield* resolveTargetRechecking({
         parent,
         target: roleTarget,
         providers,
+        ...(optionBaseline === undefined ? {} : { optionBaseline }),
         skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
       });
       const runtimeMode = yield* resolveRuntimeMode(

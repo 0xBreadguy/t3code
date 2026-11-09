@@ -44,7 +44,7 @@ import {
   latestNativeContextUsage,
 } from "@t3tools/provider-core/server/handoffBudget";
 import { deliverContextHandoffs } from "./ContextHandoffDelivery.ts";
-import { leadWorkerGuidance } from "@t3tools/shared/leadPolicy";
+import { isAppointedLead, leadTurnGuidance } from "@t3tools/shared/leadPolicy";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -775,11 +775,29 @@ export const layer: Layer.Layer<
       const goalDriver = session.driver === "codex" || session.driver === "claudeAgent";
       const goalCommand = goalDriver && parseGoalCommand(message) !== null;
       // One shared preparation boundary: every provider turn sees the project's
-      // finishing policy when (and only when) that project has a lead binding.
+      // finishing policy, and an appointed lead also gets its coordination terms.
       const leadGuidance = yield* serverSettings.getSettings.pipe(
-        Effect.map((settings) =>
-          leadWorkerGuidance(settings, projection.thread.projectId, projection.thread.id),
-        ),
+        Effect.flatMap((settings) => {
+          const policy = {
+            settings,
+            projectId: projection.thread.projectId,
+            threadId: projection.thread.id,
+            leadState: projection.thread.leadState,
+          } as const;
+          if (!isAppointedLead(settings, projection.thread.projectId, projection.thread.id)) {
+            return Effect.succeed(leadTurnGuidance(policy));
+          }
+          return projects.getById(projection.thread.projectId).pipe(
+            Effect.map(Option.getOrUndefined),
+            Effect.map((project) =>
+              leadTurnGuidance({
+                ...policy,
+                ...(project?.title === undefined ? {} : { projectTitle: project.title }),
+              }),
+            ),
+            Effect.orElseSucceed(() => leadTurnGuidance(policy)),
+          );
+        }),
         Effect.orElseSucceed(() => null),
       );
       // The provider turn marks cancellation work delivered; restart continuations use their own text or resume natively.

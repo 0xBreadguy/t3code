@@ -1,6 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import {
   CommandId,
+  ComposerContextId,
   EnvironmentId,
   MessageId,
   type OrchestrationV2Command,
@@ -769,3 +770,93 @@ it.effect("Force stop refuses once a newer run has started, before killing anyth
     expect(killed).toBe(false);
   }),
 );
+
+it.effect("forwards captured composer context into message.dispatch", () => {
+  const projectId = ProjectId.make("project:thread-management:context");
+  const threadId = ThreadId.make("thread:thread-management:context");
+  const messageId = MessageId.make("message:thread-management:context");
+  const runId = RunId.make("run:thread-management:context");
+  const instanceId = ProviderInstanceId.make("codex");
+  const dispatched: Array<unknown> = [];
+  const projection = {
+    thread: {
+      id: threadId,
+      projectId,
+      title: "Lead",
+      deletedAt: null,
+      archivedAt: null,
+      modelSelection: { instanceId, model: "gpt-5.4" },
+    },
+    runs: [
+      {
+        id: runId,
+        threadId,
+        ordinal: 1,
+        status: "queued",
+        providerInstanceId: instanceId,
+        modelSelection: { instanceId, model: "gpt-5.4" },
+      },
+    ],
+    messages: [
+      {
+        id: messageId,
+        threadId,
+        runId,
+        role: "user",
+        text: "Review the worker.",
+        attachments: [],
+      },
+    ],
+    turnItems: [],
+  } as unknown as OrchestrationV2ThreadProjection;
+  const layerTest = ThreadManagementService.layer.pipe(
+    Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+    Layer.provide(
+      Layer.mock(Orchestrator.OrchestratorV2)({
+        getThreadRecords: () => Effect.succeed(projection),
+        dispatch: (command) =>
+          Effect.sync(() => {
+            dispatched.push(command);
+            return { sequence: 1, storedEvents: [] } as never;
+          }),
+      }),
+    ),
+    Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(layerReceiptsTest),
+  );
+  const context = {
+    version: 1 as const,
+    records: [
+      {
+        version: 1 as const,
+        contextId: ComposerContextId.make("ctx-worker"),
+        label: "Worker",
+        kind: "thread" as const,
+        environmentId: EnvironmentId.make("environment:local"),
+        threadId: ThreadId.make("thread:worker"),
+        title: "Worker",
+      },
+    ],
+  };
+  return Effect.gen(function* () {
+    const service = yield* ThreadManagementService.ThreadManagementService;
+    const result = yield* service.sendToThread({
+      projectId,
+      commandId: CommandId.make("command:thread-management:context"),
+      threadId,
+      messageId,
+      text: "Review the worker.",
+      attachments: [],
+      context,
+      mode: "queue",
+      createdBy: "user",
+      creationSource: "web",
+    });
+    expect(result.delivery).toBe("queued");
+    expect(dispatched[0]).toMatchObject({
+      type: "message.dispatch",
+      messageId,
+      context,
+    });
+  }).pipe(Effect.provide(layerTest));
+});

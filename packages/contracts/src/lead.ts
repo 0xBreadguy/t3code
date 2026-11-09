@@ -11,6 +11,7 @@ import {
   TrimmedNonEmptyString,
   ProjectId,
 } from "./baseSchemas.ts";
+import { OrchestrationMessageContext } from "./composerContext.ts";
 import { ModelSelection } from "./modelSelection.ts";
 
 /**
@@ -241,6 +242,11 @@ export const LeadSendInput = Schema.Struct({
   messageId: MessageId,
   text: TrimmedNonEmptyString.check(Schema.isMaxLength(120_000)),
   mode: Schema.optional(LeadSendMode),
+  /**
+   * The composer's existing semantic context. Thread records are validated and
+   * relabeled by the server against this project and environment.
+   */
+  context: Schema.optional(OrchestrationMessageContext),
 });
 export type LeadSendInput = typeof LeadSendInput.Type;
 

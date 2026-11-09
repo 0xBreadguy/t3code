@@ -9,7 +9,10 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 import {
   appendLeadHandoff,
+  isAppointedLead,
+  leadAppointedGuidance,
   leadThreadIdForProject,
+  leadTurnGuidance,
   leadWorkerFinishMode,
   leadWorkerGuidance,
 } from "./leadPolicy.ts";
@@ -94,5 +97,100 @@ describe("worker finishing policy", () => {
     expect(leadWorkerGuidance(settings, ProjectId.make("project-b"), workerThreadId)).toBeNull();
     expect(leadWorkerGuidance(settings, projectId, leadThreadId)).toBeNull();
     expect(leadWorkerGuidance(settings, projectId, workerThreadId)).toContain("independent");
+  });
+});
+
+describe("appointed lead guidance", () => {
+  const settings = {
+    ...DEFAULT_SERVER_SETTINGS,
+    projectLeadConfigs: {
+      [projectId]: {
+        threadId: leadThreadId,
+        workerDefault: "handoff" as const,
+        workerFinishOverrides: {},
+      },
+    },
+  };
+
+  it("applies only to the appointed lead and carries its real reports and grant terms", () => {
+    expect(isAppointedLead(settings, projectId, leadThreadId)).toBe(true);
+    expect(isAppointedLead(settings, projectId, workerThreadId)).toBe(false);
+    expect(
+      leadAppointedGuidance({
+        settings,
+        projectId,
+        threadId: workerThreadId,
+        projectTitle: "Parser",
+        leadState: null,
+      }),
+    ).toBeNull();
+
+    const guidance = leadAppointedGuidance({
+      settings,
+      projectId,
+      threadId: leadThreadId,
+      projectTitle: "Parser",
+      leadState: {
+        revision: 4,
+        handoffs: [handoff("aaa", "A secret worker summary")],
+        ownership: {
+          id: "grant-1",
+          scope: { type: "threads", threadIds: [workerThreadId] },
+          actions: ["reconcile", "open_pr"],
+          grantedAt: "2026-11-08T00:01:00.000Z",
+          revokedAt: null,
+        },
+      },
+    });
+    expect(guidance).toContain('project "Parser" (project-a)');
+    expect(guidance).toContain("1 worker report is recorded");
+    expect(guidance).toContain("lead_status");
+    expect(guidance).toContain("Reported is not verified");
+    expect(guidance).toContain("Only the user can grant authority");
+    expect(guidance).toContain("grant-1");
+    expect(guidance).toContain("threads thread-worker");
+    expect(guidance).toContain("reconcile, open_pr");
+    expect(guidance).toContain("not a shell sandbox");
+    expect(guidance).not.toContain("A secret worker summary");
+  });
+
+  it("reports a revoked grant and never treats it as authority", () => {
+    const guidance = leadAppointedGuidance({
+      settings,
+      projectId,
+      threadId: leadThreadId,
+      leadState: {
+        revision: 5,
+        handoffs: [],
+        ownership: {
+          id: "grant-2",
+          scope: { type: "project" },
+          actions: ["merge"],
+          grantedAt: "2026-11-08T00:01:00.000Z",
+          revokedAt: "2026-11-08T00:02:00.000Z",
+        },
+      },
+    });
+    expect(guidance).toContain("No worker reports are recorded yet");
+    expect(guidance).toContain("grant-2 was revoked");
+    expect(guidance).toContain("Do not start a new managed action");
+  });
+
+  it("chooses worker, lead, or no guidance at the shared turn boundary", () => {
+    const base = { settings, projectId, projectTitle: "Parser" };
+    expect(leadTurnGuidance({ ...base, threadId: leadThreadId })).toContain("## Project lead");
+    expect(leadTurnGuidance({ ...base, threadId: workerThreadId })).toContain(
+      "## Finishing work for this project",
+    );
+    expect(leadTurnGuidance({ ...base, threadId: workerThreadId })).not.toContain(
+      "## Project lead",
+    );
+    expect(
+      leadTurnGuidance({
+        ...base,
+        projectId: ProjectId.make("project-b"),
+        threadId: workerThreadId,
+      }),
+    ).toBeNull();
   });
 });

@@ -1,7 +1,13 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { LeadHandoff, LeadState, leadStateRevisionProblem, ProjectLeadConfig } from "./lead.ts";
+import {
+  LeadHandoff,
+  LeadSendInput,
+  LeadState,
+  leadStateRevisionProblem,
+  ProjectLeadConfig,
+} from "./lead.ts";
 import { OrchestrationV2LeadState } from "./orchestrationV2.ts";
 
 const decodeLeadHandoff = Schema.decodeUnknownSync(LeadHandoff);
@@ -85,5 +91,43 @@ describe("project lead config", () => {
         workerDefault: "handoff",
       }),
     ).toMatchObject({ workerDefault: "handoff", workerFinishOverrides: {} });
+  });
+});
+
+describe("lead send context", () => {
+  const decodeLeadSend = Schema.decodeUnknownSync(LeadSendInput);
+  const send = {
+    projectId: "project-a",
+    commandId: "command-1",
+    messageId: "message-1",
+    text: "Review the change.",
+  };
+
+  it("keeps the old text-only send valid", () => {
+    expect(decodeLeadSend(send).context).toBeUndefined();
+  });
+
+  it("accepts existing composer context records with the message", () => {
+    const decoded = decodeLeadSend({
+      ...send,
+      context: {
+        version: 1,
+        records: [
+          {
+            version: 1,
+            contextId: "ctx-worker",
+            label: "Worker",
+            kind: "thread",
+            environmentId: "environment-a",
+            threadId: "thread-worker",
+            title: "Worker",
+          },
+        ],
+      },
+    });
+    expect(decoded.context?.records[0]).toMatchObject({
+      kind: "thread",
+      threadId: "thread-worker",
+    });
   });
 });

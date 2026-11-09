@@ -2602,6 +2602,209 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
   );
 
+  it.effect("keeps a configured role's provider and model when only options are explicit", () =>
+    Effect.gen(function* () {
+      const designId = ProviderInstanceId.make("codex-design");
+      const driver = ProviderDriverKind.make("codex");
+      const inherited = {
+        instanceId: codexInstanceId,
+        model: "gpt-5.4",
+        options: [{ id: "reasoningEffort", value: "high" }],
+      } as const;
+      const roleSelection = {
+        instanceId: designId,
+        model: "design-model",
+        options: [
+          { id: "reasoningEffort", value: "low" },
+          { id: "fastMode", value: true },
+        ],
+      } as const;
+      const override = [{ id: "reasoningEffort", value: "max" }] as const;
+      const cases = [
+        {
+          name: "options merge onto the role baseline",
+          target: { options: override },
+          expected: { ...roleSelection, options: [override[0], roleSelection.options[1]] },
+        },
+        {
+          name: "empty array clears role options",
+          target: { options: [] },
+          expected: { ...roleSelection, options: [] },
+        },
+        {
+          name: "empty object clears role options",
+          target: { options: {} },
+          expected: { ...roleSelection, options: [] },
+        },
+        {
+          name: "explicit model still wins",
+          target: { model: "other-model", options: { reasoningEffort: "max" } },
+          expected: {
+            instanceId: codexInstanceId,
+            model: "other-model",
+            options: override,
+          },
+        },
+      ] as const;
+      for (const testCase of cases) {
+        const commands: Array<unknown> = [];
+        const task = {
+          id: taskId,
+          threadId: parentThreadId,
+          origin: "app_owned",
+          childThreadId,
+          providerInstanceId: testCase.expected.instanceId,
+          model: testCase.expected.model,
+          status: "running",
+          result: null,
+        };
+        const dependencies = Layer.mergeAll(
+          NodeServices.layer,
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            hasReceipt: () => Effect.succeed(false),
+            assertProviderInstanceEnabled: () => Effect.void,
+            isProviderInstanceEnabledForProject: () => Effect.succeed(true),
+            getThreadRecords: (threadId) =>
+              Effect.succeed(
+                threadId === parentThreadId
+                  ? parentProjection(commands.length > 0 ? [task] : [], inherited)
+                  : childProjection,
+              ),
+            dispatch: (command) =>
+              Effect.sync(() => {
+                commands.push(command);
+                return {
+                  sequence: 1,
+                  storedEvents: [{ event: { type: "subagent.updated", payload: task } }],
+                } as never;
+              }),
+          }),
+          ServerSettings.layerTest({ agentRoleModels: { design: roleSelection } }),
+          providerRegistryLayer([
+            {
+              ...providerSnapshot({
+                instanceId: codexInstanceId,
+                driver,
+                model: inherited.model,
+              }),
+              models: [inherited.model, "other-model"].map((model) => ({
+                slug: model,
+                name: model,
+                isCustom: false,
+                capabilities: null,
+              })),
+            },
+            providerSnapshot({ instanceId: designId, driver, model: "design-model" }),
+          ]),
+          adapterRegistryLayer([codexInstanceId, designId]),
+          Layer.mock(ProjectService.ProjectService)({}),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        );
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          yield* service.delegateTask(scope, {
+            task: "Review the change.",
+            role: "design",
+            target: yield* decodeTarget(testCase.target),
+            mode: "async",
+            clientRequestId: testCase.name,
+          });
+          assert.deepEqual(
+            (commands[0] as { modelSelection: unknown }).modelSelection,
+            testCase.expected,
+            testCase.name,
+          );
+        }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
+      }
+    }),
+  );
+
+  it.effect("resolves the same role policy from a nested child thread", () =>
+    Effect.gen(function* () {
+      const designId = ProviderInstanceId.make("codex-design");
+      const driver = ProviderDriverKind.make("codex");
+      const inherited = { instanceId: codexInstanceId, model: "gpt-5.4" } as const;
+      const roleSelection = {
+        instanceId: designId,
+        model: "design-model",
+      } as const;
+      const commands: Array<unknown> = [];
+      const nestedChildThreadId = ThreadId.make("thread:nested-delegate-child");
+      const task = {
+        id: taskId,
+        threadId: childThreadId,
+        origin: "app_owned",
+        childThreadId: nestedChildThreadId,
+        providerInstanceId: designId,
+        model: roleSelection.model,
+        status: "running",
+        result: null,
+      };
+      const baseParent = parentProjection([], inherited);
+      const nestedParent = {
+        ...baseParent,
+        thread: { ...baseParent.thread, id: childThreadId },
+        runs: baseParent.runs.map((entry) => ({ ...entry, threadId: childThreadId })),
+      };
+      const scopeFromChild: McpInvocationScope = {
+        ...scope,
+        thread: { ...scope.thread!, threadId: childThreadId },
+      };
+      const dependencies = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          hasReceipt: () => Effect.succeed(false),
+          assertProviderInstanceEnabled: () => Effect.void,
+          isProviderInstanceEnabledForProject: () => Effect.succeed(true),
+          getThreadRecords: (threadId) =>
+            Effect.succeed(
+              (threadId === childThreadId
+                ? commands.length > 0
+                  ? {
+                      ...nestedParent,
+                      subagents: [task],
+                    }
+                  : nestedParent
+                : childProjection) as never,
+            ),
+          dispatch: (command) =>
+            Effect.sync(() => {
+              commands.push(command);
+              return {
+                sequence: 1,
+                storedEvents: [{ event: { type: "subagent.updated", payload: task } }],
+              } as never;
+            }),
+        }),
+        ServerSettings.layerTest({ agentRoleModels: { design: roleSelection } }),
+        providerRegistryLayer([
+          providerSnapshot({ instanceId: codexInstanceId, driver, model: inherited.model }),
+          providerSnapshot({ instanceId: designId, driver, model: roleSelection.model }),
+        ]),
+        adapterRegistryLayer([codexInstanceId, designId]),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        yield* service.delegateTask(scopeFromChild, {
+          task: "Design the change.",
+          role: "design",
+          mode: "async",
+          clientRequestId: "nested-role",
+        });
+        assert.deepEqual(
+          (commands[0] as { modelSelection: unknown }).modelSelection,
+          roleSelection,
+        );
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
+    }),
+  );
+
   describe("resolveRuntimeMode", () => {
     const muse = {
       modelSelection: { instanceId: ProviderInstanceId.make("muse"), model: "muse-model" },

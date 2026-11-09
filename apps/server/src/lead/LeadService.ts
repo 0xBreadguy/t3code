@@ -1,5 +1,8 @@
 import {
   CommandId,
+  COMPOSER_CONTEXT_LABEL_MAX_CHARS,
+  type ComposerContextRecord,
+  type ThreadContextRecord,
   LeadRpcError,
   type LeadAuthorityResult,
   type LeadConfigureInput,
@@ -20,6 +23,7 @@ import {
   type LeadStatusResult,
   type LeadThreadSummary,
   type ModelSelection,
+  type OrchestrationMessageContext,
   type OrchestrationV2AppThread,
   type OrchestrationV2ThreadProjection,
   ProjectId,
@@ -40,6 +44,7 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettingsModule from "../serverSettings.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
@@ -70,6 +75,9 @@ const isStaleDispatchError = (cause: unknown): boolean =>
   "_tag" in cause &&
   ((cause as { readonly _tag?: unknown })._tag === "OrchestratorDispatchError" ||
     (cause as { readonly _tag?: unknown })._tag === "OrchestratorThreadNotFoundError");
+
+const isThreadContextRecord = (record: ComposerContextRecord): record is ThreadContextRecord =>
+  record.kind === "thread" && "threadId" in record && "environmentId" in record;
 
 const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 
@@ -158,6 +166,7 @@ const make = Effect.gen(function* () {
   const settingsService = yield* ServerSettingsModule.ServerSettingsService;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const git = yield* GitVcsDriver.GitVcsDriver;
+  const environment = yield* ServerEnvironment.ServerEnvironmentIdentity;
 
   const requireProject = Effect.fn("LeadService.requireProject")(function* (projectId: ProjectId) {
     const project = yield* projects.get(projectId).pipe(
@@ -370,10 +379,6 @@ const make = Effect.gen(function* () {
       if (candidateThreadId !== undefined) {
         const projection = yield* readProjection(candidateThreadId, input.projectId);
         yield* validateLeadThread({ projection, projectId: input.projectId, operation: "ensure" });
-        const binding =
-          stored?.threadId === candidateThreadId
-            ? stored
-            : yield* bind({ projectId: input.projectId, threadId: candidateThreadId });
         if (
           input.modelSelection !== undefined &&
           !modelSelectionsEqual(input.modelSelection, projection.thread.modelSelection)
@@ -385,6 +390,10 @@ const make = Effect.gen(function* () {
             projectId: input.projectId,
           });
         }
+        const binding =
+          stored?.threadId === candidateThreadId
+            ? stored
+            : yield* bind({ projectId: input.projectId, threadId: candidateThreadId });
         return {
           projectId: input.projectId,
           threadId: candidateThreadId,
@@ -395,6 +404,40 @@ const make = Effect.gen(function* () {
           thread: summaryOf(
             projection.thread,
             projection.runs.some(ThreadManagementService.isActiveRun),
+          ),
+        };
+      }
+
+      const derivedThreadId = ThreadId.make(leadThreadIdForProject(input.projectId));
+      const existingDerived = yield* readMaybeProjection(derivedThreadId, input.projectId);
+      if (Option.isSome(existingDerived)) {
+        yield* validateLeadThread({
+          projection: existingDerived.value,
+          projectId: input.projectId,
+          operation: "ensure",
+        });
+        if (
+          input.modelSelection !== undefined &&
+          !modelSelectionsEqual(input.modelSelection, existingDerived.value.thread.modelSelection)
+        ) {
+          return yield* fail({
+            operation: "ensure",
+            reason: "invalid_request",
+            message: `Thread ${derivedThreadId} already uses ${existingDerived.value.thread.modelSelection.model}; model switching is a separate thread action.`,
+            projectId: input.projectId,
+          });
+        }
+        const binding = yield* bind({ projectId: input.projectId, threadId: derivedThreadId });
+        return {
+          projectId: input.projectId,
+          threadId: derivedThreadId,
+          created: false,
+          modelSelection: existingDerived.value.thread.modelSelection,
+          policySource: input.modelSelection === undefined ? "thread_inheritance" : "explicit",
+          binding,
+          thread: summaryOf(
+            existingDerived.value.thread,
+            existingDerived.value.runs.some(ThreadManagementService.isActiveRun),
           ),
         };
       }
@@ -423,29 +466,6 @@ const make = Effect.gen(function* () {
         selection: resolved.modelSelection,
         providers: providerList,
       });
-
-      const derivedThreadId = ThreadId.make(leadThreadIdForProject(input.projectId));
-      const existingDerived = yield* readMaybeProjection(derivedThreadId, input.projectId);
-      if (Option.isSome(existingDerived)) {
-        yield* validateLeadThread({
-          projection: existingDerived.value,
-          projectId: input.projectId,
-          operation: "ensure",
-        });
-        const binding = yield* bind({ projectId: input.projectId, threadId: derivedThreadId });
-        return {
-          projectId: input.projectId,
-          threadId: derivedThreadId,
-          created: false,
-          modelSelection: existingDerived.value.thread.modelSelection,
-          policySource: resolved.source,
-          binding,
-          thread: summaryOf(
-            existingDerived.value.thread,
-            existingDerived.value.runs.some(ThreadManagementService.isActiveRun),
-          ),
-        };
-      }
 
       const commandId = CommandId.make(`lead:ensure:${input.requestId}`);
       const launched = yield* threadLaunch
@@ -582,7 +602,63 @@ const make = Effect.gen(function* () {
     };
   });
 
+  const validateSendContext = Effect.fn("LeadService.validateSendContext")(function* (input: {
+    readonly projectId: ProjectId;
+    readonly context: OrchestrationMessageContext | undefined;
+  }) {
+    if (input.context === undefined) return undefined;
+    const environmentId = yield* environment.getEnvironmentId;
+    const records: Array<ComposerContextRecord> = [];
+    for (const record of input.context.records) {
+      if (!isThreadContextRecord(record)) {
+        records.push(record);
+        continue;
+      }
+      if (record.environmentId !== environmentId) {
+        return yield* fail({
+          operation: "send",
+          reason: "wrong_project",
+          message: `Context thread ${record.threadId} belongs to another environment.`,
+          projectId: input.projectId,
+        });
+      }
+      const projection = yield* readProjection(record.threadId, input.projectId);
+      if (projection.thread.deletedAt !== null) {
+        return yield* fail({
+          operation: "send",
+          reason: "thread_not_found",
+          message: `Context thread ${record.threadId} was deleted.`,
+          projectId: input.projectId,
+        });
+      }
+      if (projection.thread.projectId !== input.projectId) {
+        return yield* fail({
+          operation: "send",
+          reason: "wrong_project",
+          message: `Context thread ${record.threadId} belongs to another project.`,
+          projectId: input.projectId,
+        });
+      }
+      // The server supplies the thread's real title and this environment's id.
+      records.push({
+        ...record,
+        environmentId,
+        title: projection.thread.title.slice(0, COMPOSER_CONTEXT_LABEL_MAX_CHARS),
+      });
+    }
+    return { ...input.context, records };
+  });
+
   const send: LeadService["Service"]["send"] = Effect.fn("LeadService.send")(function* (input) {
+    yield* requireProject(input.projectId);
+    // A committed retry must stay idempotent even if a captured source changed since.
+    const retrying = yield* threads.hasReceipt(input.commandId);
+    const context = retrying
+      ? input.context
+      : yield* validateSendContext({
+          projectId: input.projectId,
+          context: input.context,
+        });
     const ensured = yield* ensure({
       projectId: input.projectId,
       requestId: `send:${input.commandId}`,
@@ -595,6 +671,7 @@ const make = Effect.gen(function* () {
         messageId: input.messageId,
         text: input.text,
         attachments: [],
+        ...(context === undefined ? {} : { context }),
         mode: input.mode ?? "auto",
         createdBy: "user",
         creationSource: "web",
@@ -737,18 +814,36 @@ const make = Effect.gen(function* () {
     readonly threadId: ThreadId;
     readonly operation: string;
     readonly retryOnStale: boolean;
+    /** User-authority mutations must stay on the revision they were checked against. */
+    readonly expectedRevision?: number | undefined;
     readonly update: (state: LeadState | null) => Effect.Effect<LeadState | null, LeadRpcError>;
   }) {
     const attempts = input.retryOnStale ? MAX_CAS_ATTEMPTS : 1;
     for (let attempt = 0; attempt < attempts; attempt++) {
       const projection = yield* readProjection(input.threadId, input.projectId);
       const current = projection.thread.leadState ?? null;
+      if (
+        input.expectedRevision !== undefined &&
+        (current?.revision ?? 0) !== input.expectedRevision
+      ) {
+        return yield* fail({
+          operation: input.operation,
+          reason: "stale_revision",
+          message: `Lead state for thread ${input.threadId} changed.`,
+          projectId: input.projectId,
+        });
+      }
       const next = yield* input.update(current);
-      if (current !== null && next !== null && next.revision === current.revision) {
+      const unchanged =
+        (current === null && next === null) ||
+        (current !== null &&
+          next !== null &&
+          next.handoffs === current.handoffs &&
+          next.ownership === current.ownership);
+      if (unchanged) {
         return { state: current };
       }
       const nextRevision = (current?.revision ?? 0) + 1;
-      if (current === null && next === null) return { state: null };
       const committed: LeadState | null =
         next === null ? null : { ...next, revision: nextRevision };
       const dispatched = yield* threads
@@ -1059,6 +1154,7 @@ const make = Effect.gen(function* () {
       threadId: binding.threadId,
       operation: input.operation,
       retryOnStale: false,
+      expectedRevision: input.expectedRevision,
       update: (state) => input.update(state),
     });
     return {
