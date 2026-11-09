@@ -10,6 +10,7 @@ import {
   type ModelSelection,
   OrchestratorMcpDelegateTaskResult,
   OrchestratorMcpThreadInterruptResult,
+  OrchestratorMcpThreadReadResult,
   OrchestratorMcpThreadSendResult,
   ProjectId,
   ProviderDriverKind,
@@ -79,11 +80,13 @@ const delegatedResult = "Delegated API boundary inspected.";
 const cancellationPrompt = "Remain active until the parent cancels this delegated task.";
 const queuedFollowupPrompt = "Complete the queued follow-up and return the final result.";
 const queuedFollowupResult = "Queued delegated follow-up completed.";
+const longFollowupResult = "Long delegated follow-up line. ".repeat(1_500);
 
 const decodeDelegateTaskResult = Schema.decodeUnknownEffect(OrchestratorMcpDelegateTaskResult);
 const decodeThreadInterruptResult = Schema.decodeUnknownEffect(
   OrchestratorMcpThreadInterruptResult,
 );
+const decodeThreadReadResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadReadResult);
 const decodeThreadSendResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadSendResult);
 
 const codexSelection = {
@@ -199,6 +202,7 @@ describe("orchestrator MCP toolkit", () => {
     { label: "distinct", result: queuedFollowupResult, latestSummary: queuedFollowupResult },
     { label: "identical", result: delegatedResult, latestSummary: null },
     { label: "emoji", result: "😀", latestSummary: "😀" },
+    { label: "long", result: longFollowupResult, latestSummary: longFollowupResult },
   ])("reports $label child results", ({ result, latestSummary }) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -667,7 +671,7 @@ describe("orchestrator MCP toolkit", () => {
             {
               threadId: delegated.childThreadId,
               limit: 100,
-              maxCharsPerItem: result === "😀" ? 1 : 20_000,
+              maxCharsPerItem: result === "😀" ? 1 : 50_000,
             },
             { ...invocation, thread: undefined },
           ).pipe(Effect.withTracer(tracer));
@@ -682,11 +686,40 @@ describe("orchestrator MCP toolkit", () => {
           const read = yield* invoke("t3_thread_read", {
             threadId: delegated.childThreadId,
             limit: 100,
-            maxCharsPerItem: result === "😀" ? 1 : 20_000,
+            maxCharsPerItem: result === "😀" ? 1 : 50_000,
           }).pipe(Effect.withTracer(tracer));
           expect(read.isError).not.toBe(true);
           expect(transferReads.length).toBeGreaterThan(0);
           expect(read.structuredContent).toEqual(parentlessRead.structuredContent);
+          if (result === longFollowupResult) {
+            // Too long for one result, so only the read reaching its end delivers it.
+            const deliveryState = Effect.map(
+              orchestrator.getThreadProjection(parentThreadId),
+              (projection) =>
+                projection.subagents.find((task) => task.id === queuedFollowup.taskId)
+                  ?.completionDelivery?.state,
+            );
+            expect(yield* deliveryState).toBe("claimed");
+            const resultItemId = finalProjection.turnItems.find(
+              (item) => item.runId === queuedFollowup.runId && item.type === "assistant_message",
+            )?.id;
+            let textOffset: number | null = 0;
+            const pages: Array<string> = [];
+            while (textOffset !== null) {
+              const page: OrchestratorMcpThreadReadResult = yield* invoke("t3_thread_read", {
+                threadId: delegated.childThreadId,
+                itemId: resultItemId,
+                textOffset,
+                maxCharsPerItem: 50_000,
+              }).pipe(Effect.flatMap((call) => decodeThreadReadResult(call.structuredContent)));
+              const [item] = page.items;
+              pages.push(item?.text ?? "");
+              textOffset = item?.nextTextOffset ?? null;
+              if (textOffset !== null) expect(yield* deliveryState).toBe("claimed");
+            }
+            expect(pages.length).toBeGreaterThan(1);
+            expect(pages.join("")).toBe(result);
+          }
           const afterRead = yield* orchestrator.getThreadProjection(parentThreadId);
           expect(
             afterRead.subagents.find((task) => task.id === queuedFollowup.taskId)

@@ -331,7 +331,8 @@ it("readThread keeps an activity page within an MCP client's output limit and pa
       type: "reasoning",
       runId: activeRunId,
       status: "completed",
-      title: null,
+      // Command titles can carry a whole command.
+      title: position === 1 ? "標".repeat(60_000) : null,
       text: position === 0 ? "😀a".repeat(30_000) : `${position} `.padEnd(3_000, "x"),
       updatedAt: now,
     },
@@ -390,8 +391,8 @@ it("readThread keeps an activity page within an MCP client's output limit and pa
         maxCharsPerItem: 1_500,
         ...(afterPosition === undefined ? {} : { afterPosition }),
       });
-      // Claude Code rejects MCP results over ~25k tokens, about 50k chars of this JSON.
-      expect(JSON.stringify(result).length).toBeLessThanOrEqual(50_000);
+      // Claude Code rejects MCP results over 25k tokens; CJK text is about a token per char.
+      expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(50_000);
       if (page === 0) expect(result.hasMore).toBe(true);
       positions.push(...result.items.map((item) => item.position));
       if (!result.hasMore) break;
@@ -410,7 +411,7 @@ it("readThread keeps an activity page within an MCP client's output limit and pa
         textOffset,
         maxCharsPerItem: 50_000,
       });
-      expect(JSON.stringify(result).length).toBeLessThanOrEqual(50_000);
+      expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(50_000);
       const [item] = result.items;
       expect(item?.text?.isWellFormed()).toBe(true);
       pages.push(item!.text!);

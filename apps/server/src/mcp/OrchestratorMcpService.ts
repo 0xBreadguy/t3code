@@ -144,8 +144,8 @@ const DEFAULT_THREAD_LIST_LIMIT = 50;
 const DEFAULT_THREAD_READ_LIMIT = 50;
 const DEFAULT_THREAD_RUN_LIMIT = 10;
 const DEFAULT_THREAD_ITEM_MAX_CHARS = 20_000;
-/** Claude Code rejects MCP results over ~25k tokens (~50k chars of this JSON); keep headroom. */
-const THREAD_READ_RESULT_MAX_CHARS = 30_000;
+/** Claude Code rejects MCP results over 25k tokens; CJK text runs near one token per char. */
+const THREAD_READ_RESULT_MAX_BYTES = 30_000;
 
 interface ResolvedTarget {
   readonly modelSelection: ModelSelection;
@@ -1025,39 +1025,59 @@ function timelineItem(input: {
   };
 }
 
-/** The longest text page under `input.maxChars` whose item JSON fits, or a one-char page. */
-function timelineItemWithin(
-  input: Parameters<typeof timelineItem>[0],
-  maxJsonChars: number,
-): OrchestratorMcpThreadTimelineItem {
-  let fitting = timelineItem({ ...input, maxChars: 1 });
-  let low = 2;
-  let high = input.maxChars - 1;
+const jsonBytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value), "utf8");
+
+/** The longest prefix length in [low, high] that `fits`, or `low - 1`. */
+function longestFitting(low: number, high: number, fits: (length: number) => boolean): number {
+  let best = low - 1;
   while (low <= high) {
     const mid = Math.floor((low + high) / 2);
-    const candidate = timelineItem({ ...input, maxChars: mid });
-    if (JSON.stringify(candidate).length <= maxJsonChars) {
-      fitting = candidate;
+    if (fits(mid)) {
+      best = mid;
       low = mid + 1;
     } else {
       high = mid - 1;
     }
   }
-  return fitting;
+  return best;
 }
 
-/** Leading items whose result fits THREAD_READ_RESULT_MAX_CHARS; never empty for a non-empty page. */
+/** The item with its text cut, and an oversized title too, until its JSON fits `maxBytes`. */
+function timelineItemWithin(
+  input: Parameters<typeof timelineItem>[0],
+  maxBytes: number,
+): OrchestratorMcpThreadTimelineItem {
+  const longestText = (title: string | null) => {
+    const withText = (maxChars: number) => ({ ...timelineItem({ ...input, maxChars }), title });
+    const chars = longestFitting(2, input.maxChars - 1, (n) => jsonBytes(withText(n)) <= maxBytes);
+    return withText(Math.max(chars, 1));
+  };
+  const item = longestText(input.row.item.title);
+  const title = item.title;
+  if (title === null || jsonBytes(item) <= maxBytes) return item;
+  // Half the budget for the title keeps `textOffset` pages of the text useful.
+  const cutTitle = (chars: number) =>
+    title.slice(0, chars === 0 ? 0 : textPageEnd(title, 0, chars));
+  const titleChars = longestFitting(
+    1,
+    title.length - 1,
+    (n) => jsonBytes({ ...item, title: cutTitle(n) }) <= maxBytes / 2,
+  );
+  return longestText(cutTitle(Math.max(titleChars, 0)));
+}
+
+/** Leading items whose result fits THREAD_READ_RESULT_MAX_BYTES; never empty for a non-empty page. */
 function timelineItemsWithinBudget(
   envelope: Omit<OrchestratorMcpThreadReadResult, "items">,
   inputs: ReadonlyArray<Parameters<typeof timelineItem>[0]>,
 ): Array<OrchestratorMcpThreadTimelineItem> {
-  const budget = THREAD_READ_RESULT_MAX_CHARS - JSON.stringify({ ...envelope, items: [] }).length;
+  const budget = THREAD_READ_RESULT_MAX_BYTES - jsonBytes({ ...envelope, items: [] });
   const items: Array<OrchestratorMcpThreadTimelineItem> = [];
-  let chars = 0;
+  let bytes = 0;
   for (const input of inputs) {
     const item = timelineItem(input);
-    chars += JSON.stringify(item).length + (items.length === 0 ? 0 : 1);
-    if (chars <= budget) {
+    bytes += jsonBytes(item) + (items.length === 0 ? 0 : 1);
+    if (bytes <= budget) {
       items.push(item);
       continue;
     }
@@ -3171,12 +3191,7 @@ const make = Effect.gen(function* () {
               target,
               returnedRunIds,
             );
-      if (
-        parent !== undefined &&
-        scope.thread !== undefined &&
-        tasks.length > 0 &&
-        (input.textOffset ?? 0) === 0
-      ) {
+      if (parent !== undefined && scope.thread !== undefined && tasks.length > 0) {
         for (const task of tasks) {
           const transfer = taskResultTransfer(parent, target, task);
           const resultRunId = transfer?.sourcePoint.runId ?? delegatedTaskRun(target, task)?.id;
