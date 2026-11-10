@@ -5401,30 +5401,69 @@ describe("OrchestratorMcpService provider resolution", () => {
         ],
       } as const;
       const override = [{ id: "reasoningEffort", value: "max" }] as const;
+      const legacyRoleSelection = {
+        instanceId: designId,
+        model: "design-model",
+        options: [{ id: "effort", value: "ultracode" }],
+      } as const;
+      const normalizedLegacyOptions = [
+        { id: "effort", value: "xhigh" },
+        { id: "ultracode", value: true },
+      ] as const;
       const cases = [
         {
           name: "options merge onto the role baseline",
+          roleSelection,
           target: { options: override },
           expected: { ...roleSelection, options: [override[0], roleSelection.options[1]] },
         },
         {
           name: "empty array clears role options",
+          roleSelection,
           target: { options: [] },
           expected: { ...roleSelection, options: [] },
         },
         {
           name: "empty object clears role options",
+          roleSelection,
           target: { options: {} },
           expected: { ...roleSelection, options: [] },
         },
         {
           name: "explicit model still wins",
+          roleSelection,
           target: { model: "other-model", options: { reasoningEffort: "max" } },
           expected: {
             instanceId: codexInstanceId,
             model: "other-model",
             options: override,
           },
+        },
+        {
+          name: "saved legacy Ultracode effort launches as the Nightly toggle pair",
+          roleSelection: legacyRoleSelection,
+          target: {},
+          expected: {
+            instanceId: designId,
+            model: "design-model",
+            options: normalizedLegacyOptions,
+          },
+        },
+        {
+          name: "options merge onto a normalized legacy baseline",
+          roleSelection: legacyRoleSelection,
+          target: { options: { effort: "high" } },
+          expected: {
+            instanceId: designId,
+            model: "design-model",
+            options: [{ id: "effort", value: "high" }, normalizedLegacyOptions[1]],
+          },
+        },
+        {
+          name: "empty array still clears a legacy baseline",
+          roleSelection: legacyRoleSelection,
+          target: { options: [] },
+          expected: { instanceId: designId, model: "design-model", options: [] },
         },
       ] as const;
       for (const testCase of cases) {
@@ -5461,7 +5500,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                 } as never;
               }),
           }),
-          ServerSettings.layerTest({ agentRoleModels: { design: roleSelection } }),
+          ServerSettings.layerTest({ agentRoleModels: { design: testCase.roleSelection } }),
           providerRegistryLayer([
             {
               ...providerSnapshot({
@@ -5476,7 +5515,40 @@ describe("OrchestratorMcpService provider resolution", () => {
                 capabilities: null,
               })),
             },
-            providerSnapshot({ instanceId: designId, driver, model: "design-model" }),
+            {
+              ...providerSnapshot({ instanceId: designId, driver, model: "design-model" }),
+              models: [
+                {
+                  slug: "design-model",
+                  name: "design-model",
+                  isCustom: false,
+                  capabilities: {
+                    optionDescriptors: [
+                      {
+                        id: "reasoningEffort",
+                        label: "Reasoning",
+                        type: "select",
+                        options: [
+                          { id: "low", label: "Low" },
+                          { id: "max", label: "Max" },
+                        ],
+                      },
+                      { id: "fastMode", label: "Fast mode", type: "boolean" },
+                      {
+                        id: "effort",
+                        label: "Effort",
+                        type: "select",
+                        options: [
+                          { id: "high", label: "High" },
+                          { id: "xhigh", label: "Extra High" },
+                        ],
+                      },
+                      { id: "ultracode", label: "Ultracode", type: "boolean" },
+                    ],
+                  },
+                },
+              ],
+            },
           ]),
           adapterRegistryLayer([codexInstanceId, designId]),
           Layer.mock(ProjectService.ProjectService)({}),

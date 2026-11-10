@@ -1813,7 +1813,7 @@ const make = Effect.gen(function* () {
     if (requestedModel !== undefined) yield* requireAdvertisedModel(provider, model);
     const advertised = advertisedModel(provider, model);
     const descriptors = advertised?.capabilities?.optionDescriptors;
-    const baselineOptions = input.optionBaseline;
+    const baselineOptions = withLegacyUltracodeEffort(descriptors, input.optionBaseline);
     const invalidOptions =
       baselineOptions === undefined ? [] : invalidOptionSelections(baselineOptions, descriptors);
     if (invalidOptions.length > 0) {
@@ -1841,7 +1841,7 @@ const make = Effect.gen(function* () {
         (advertisedModel(provider, inheritedSelection.model)?.slug ?? inheritedSelection.model);
     let options =
       baselineOptions !== undefined
-        ? knownOptions(withLegacyUltracodeEffort(descriptors, baselineOptions), descriptors)
+        ? knownOptions(baselineOptions, descriptors)
         : inheritsOptions
           ? knownOptions(
               withLegacyUltracodeEffort(descriptors, inheritedSelection.options),
