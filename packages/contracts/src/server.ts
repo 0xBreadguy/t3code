@@ -29,6 +29,7 @@ import { RuntimeMode } from "./providerPolicy.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { ServerProviderUsageLimits, UsageLimitSourceSnapshots } from "./providerUsageLimits.ts";
 import { ServerSettings } from "./settings.ts";
+import { AgentRoleInstructionDefaults } from "./agentRoles.ts";
 import { DesktopUpdateChannelSchema } from "./ipc.ts";
 
 const KeybindingsMalformedConfigIssue = Schema.Struct({
@@ -755,6 +756,8 @@ export const ServerConfig = Schema.Struct({
   settings: ServerSettings,
   /** Present when an administrator's policy file manages this environment. */
   managedPolicy: Schema.optionalKey(ManagedPolicySummary),
+  /** The built-in role text this server will actually use. Absent means the feature is unsupported. */
+  agentRoleInstructionDefaults: Schema.optionalKey(AgentRoleInstructionDefaults),
   shellResumeCompletionMarker: Schema.optionalKey(Schema.Boolean),
   /**
    * The shell can leave idle subagent children out of snapshots (`omitIdleSubagents`), and

@@ -4,6 +4,8 @@
 
 New to T3 Code? Start with the **[User Guide & Index](./user/README.md)** for how T3 Code works, prerequisites, expectations, and the complete directory of feature guides.
 
+- [Roles and models](./user/roles.md)
+
 ### Essentials
 
 - [Install T3 Code](./user/install.md) · [Welcome page](./user/welcome-page.md) · [FAQ](./user/faq.md)

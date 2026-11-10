@@ -32,6 +32,18 @@ Cases are JSON lines in `cases/`, one file per area. The case schema in `run.ts`
 
 Check that the case builds with `--dry-run --case <id>`. Then run it on the text before your fix, where it must fail, and on the text after, where it must pass.
 
+## Role delegation cases
+
+`setup.agentRolePolicy` carries synthetic role model/instruction settings. The runner passes them to the production `formatAgentRoleCatalog` and appends the result to the turn exactly as T3 does for an ordinary parent. Cases never copy catalog text.
+
+| Case                                         | Kind    | What it checks                                                                                                                       |
+| -------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| role-catalog-ui-review-routes-design         | bad     | A requested subagent UI/interaction/visual review selects the configured `design` role through `delegate_task`, not a native child.  |
+| control-role-catalog-explicit-model-wins     | control | A user-named model wins over the configured role model while the Design role and its instructions still apply.                       |
+| control-role-catalog-explicit-native-request | control | An explicit request for native tooling still uses the native child.                                                                  |
+| control-no-role-policy-does-not-delegate     | control | A project with no delegable role policy emits no catalog and handles a small review as ordinary work.                                |
+| role-catalog-security-audit-routes-security  | bad     | An explicit security/hardening audit selects the configured `security` role through `delegate_task`, not a native child or `review`. |
+
 ## Device manager cases
 
 `cases/device-manager.ndjson` ports nine mechanisms from the [device-routing investigation described in #25661](https://github.com/pingdotgg/t3code/pull/25661) and adds seven cases from t3dotgg’s 2026-10-26 fleet device investigation. All prompts, files, hosts and prior turns are authored Acme data; the fleet cases cite finding ids without carrying source transcripts or identifiers.

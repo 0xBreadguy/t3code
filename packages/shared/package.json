@@ -203,6 +203,14 @@
       "types": "./src/projectSettings.ts",
       "import": "./src/projectSettings.ts"
     },
+    "./agentRolePolicy": {
+      "types": "./src/agentRolePolicy.ts",
+      "import": "./src/agentRolePolicy.ts"
+    },
+    "./agentRoleInstructions": {
+      "types": "./src/agentRoleInstructions.ts",
+      "import": "./src/agentRoleInstructions.ts"
+    },
     "./t3ProjectFile": {
       "types": "./src/t3ProjectFile.ts",
       "import": "./src/t3ProjectFile.ts"

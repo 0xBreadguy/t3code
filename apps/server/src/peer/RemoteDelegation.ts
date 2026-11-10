@@ -98,6 +98,7 @@ export class RemoteDelegation extends Context.Service<
           readonly environmentId: EnvironmentId;
         };
       },
+      options?: { readonly roleInstructionBlock?: string | null | undefined },
     ) => Effect.Effect<{ readonly taskId: NodeId }, OrchestratorMcpFailure>;
     /**
      * A `t3_thread_send` there that started or queued a run on the thread of
@@ -267,7 +268,7 @@ const make = Effect.gen(function* () {
   });
 
   const delegate: RemoteDelegation["Service"]["delegate"] = Effect.fn("RemoteDelegation.delegate")(
-    function* (scope, input) {
+    function* (scope, input, delegationOptions) {
       const parent = yield* threads.getThreadRecords(scope.thread.threadId, ["runs"]).pipe(
         Effect.mapError(
           () =>
@@ -364,7 +365,7 @@ const make = Effect.gen(function* () {
       // Both are scoped to the provider session, as every key a caller passes is:
       // the forwarder scopes the launch's, and the record's names it.
       const key = input.clientRequestId ?? (yield* random.uuidV4());
-      const task = taskPrompt(input);
+      const task = taskPrompt(input, delegationOptions?.roleInstructionBlock);
       const title = input.title ?? parent.thread.title;
       const launched = yield* forwarding.call(
         scope,

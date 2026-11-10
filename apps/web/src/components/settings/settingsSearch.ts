@@ -330,6 +330,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     environmentOnly: true,
   },
   {
+    id: "roles-models",
+    title: "Roles & models",
+    to: "/settings/threads",
+    scope: "project-defaults",
+    searchTerms: [
+      "agent role architecture implementation research review security design test general model provider reasoning effort delegate subagent",
+    ],
+  },
+  {
     id: "default-permissions",
     title: msg("Permissions"),
     to: "/settings/threads",

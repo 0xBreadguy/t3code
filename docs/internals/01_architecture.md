@@ -72,3 +72,14 @@ workers with deadlines, never as top-level imports in main.
 
 See the [glossary](./00_glossary.md) for shared terms and the
 [development runbook](../operations/00_development.md) for setup and checks.
+
+## Role policy delivery
+
+Agent role models and role instructions are per-project environment settings, so a provider system
+prompt built once per adapter cannot carry them.
+[ProviderTurnStartService](../../apps/server/src/orchestration-v2/ProviderTurnStartService.ts) folds
+a compact role catalog into each turn's context for every provider: it lists the effective role
+models and their source, and requires T3-managed `delegate_task(role)` to apply them. Only the
+selected child receives the full role instruction. A project with no delegable role policy gets no
+catalog, which preserves native-subagent behavior; an explicit task target still wins.
+
