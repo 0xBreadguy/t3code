@@ -87,9 +87,26 @@ export function resolveInteractionMode(
     : Effect.succeed(resolved);
 }
 
-/** The task as its child receives it, with the role the caller asked for. */
-export function taskPrompt(input: OrchestratorMcpDelegateTaskInput): string {
-  return input.role === undefined || input.role === "general"
-    ? input.task
-    : `Act as the ${input.role} sub-agent for this task.\n\n${input.task}`;
+/**
+ * The task as its child receives it: the existing role prefix, then the role
+ * text snapshotted at dispatch, then the caller's task. An absent or empty
+ * instruction block leaves the previous prompt shape intact.
+ */
+export function taskPrompt(
+  input: OrchestratorMcpDelegateTaskInput,
+  roleInstructionBlock?: string | null,
+): string {
+  const parts: string[] = [];
+  if (input.role !== undefined && input.role !== "general") {
+    parts.push(`Act as the ${input.role} sub-agent for this task.`);
+  }
+  if (
+    roleInstructionBlock !== undefined &&
+    roleInstructionBlock !== null &&
+    roleInstructionBlock !== ""
+  ) {
+    parts.push(roleInstructionBlock);
+  }
+  parts.push(input.task);
+  return parts.join("\n\n");
 }

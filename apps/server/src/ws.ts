@@ -169,6 +169,7 @@ import {
   projectThreadProjectionForWire,
   threadStreamEventItem,
 } from "./orchestration-v2/WireProjection.ts";
+import { AGENT_ROLE_INSTRUCTION_DEFAULTS } from "@t3tools/shared/agentRoleInstructions";
 import { dedupeSnapshotBodies } from "@t3tools/shared/orchestrationV2DedupedBodies";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
@@ -1883,6 +1884,7 @@ export const layerWsRpc = (
           ...(serverSettings.managedPolicy === undefined
             ? {}
             : { managedPolicy: serverSettings.managedPolicy }),
+          agentRoleInstructionDefaults: AGENT_ROLE_INSTRUCTION_DEFAULTS,
           shellResumeCompletionMarker: true,
           shellThreadFamilies: true,
           threadLinkMetadata: true,

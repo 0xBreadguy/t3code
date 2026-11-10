@@ -14,13 +14,18 @@ import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as PlatformNodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  AgentRoleInstructions,
+  AgentRoleModelSelections,
   ComposerContextRecord,
+  DEFAULT_SERVER_SETTINGS,
   DeviceOperationError,
   DeviceSummary,
   OrchestratorMcpTaskRole,
   PreviewAutomationError,
   PreviewAutomationUnavailableError,
+  ProjectId,
   ProviderInstanceId,
+  type ServerSettings,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -48,6 +53,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
+import { formatAgentRoleCatalog } from "@t3tools/shared/agentRoleInstructions";
 import { THEME_GUIDE } from "@t3tools/shared/themeCss";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import { buildCodexAdditionalContext } from "../../apps/server/src/provider/CodexDeveloperInstructions.ts";
@@ -312,6 +318,16 @@ export const McpToolUseCase = Schema.Struct({
     linkedEnvironments: Schema.optional(Schema.Boolean),
     /** delegate_task `role` for a delegated child. T3 builds the child's first message from it. */
     delegateRole: Schema.optional(OrchestratorMcpTaskRole),
+    /**
+     * Synthetic effective role policy for this project. The runner passes it to the
+     * production role-catalog formatter; role instruction text is never copied here.
+     */
+    agentRolePolicy: Schema.optional(
+      Schema.Struct({
+        agentRoleModels: Schema.optional(AgentRoleModelSelections),
+        agentRoleInstructions: Schema.optional(AgentRoleInstructions),
+      }),
+    ),
     context: Schema.optional(Schema.String),
     priorTurns: Schema.optional(
       Schema.Array(
@@ -1024,6 +1040,18 @@ const loadTools = (tools: Array<ApiTool>, id: string, found: ReadonlyArray<ApiTo
   return { type: "tool_result", tool_use_id: id, content };
 };
 
+/** Synthetic project for role-catalog cases. Cases carry policy values, never prompt text. */
+const EVAL_PROJECT_ID = ProjectId.make("project:acme-eval");
+
+/** T3's per-turn role catalog for a case, built by the production formatter. */
+const roleCatalogForCase = (policy: McpToolUseCase["setup"]["agentRolePolicy"]): string | null =>
+  policy === undefined
+    ? null
+    : formatAgentRoleCatalog({
+        settings: { ...DEFAULT_SERVER_SETTINGS, ...policy } as ServerSettings,
+        projectId: EVAL_PROJECT_ID,
+      });
+
 /** Messages for a case: reminders, context, prior turns with real tool blocks, then the prompt. */
 export const buildMessages = (sample: Sample) => {
   const { testCase, base, tools } = sample;
@@ -1102,8 +1130,10 @@ export const buildMessages = (sample: Sample) => {
   const prompt =
     sideChatContext === undefined ? userText : withInlineContext(sideChatContext, userText);
   const childPrompt = () => taskPrompt({ task: prompt, role: delegateRole });
+  const roleCatalog = roleCatalogForCase(testCase.setup.agentRolePolicy);
+  const turnPrompt = roleCatalog === null ? prompt : `${roleCatalog}\n\nUser message:\n${prompt}`;
   if (testCase.prompt !== "")
-    push("user", text(role === "delegated-child" ? childPrompt() : prompt));
+    push("user", text(role === "delegated-child" ? childPrompt() : turnPrompt));
   // Claude Code gives a subagent its SubagentStart hooks' context as a reminder after the task.
   if (native && base.subagentContext) {
     push("user", reminder(`SubagentStart hook additional context: ${base.subagentContext}`));

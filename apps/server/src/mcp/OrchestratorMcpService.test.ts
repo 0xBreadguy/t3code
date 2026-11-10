@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
   CommandId,
+  DEFAULT_SERVER_SETTINGS,
   ContextTransferId,
   EnvironmentId,
   GitCommandError,
@@ -23,12 +24,14 @@ import {
   ProviderThreadId,
   ProviderTurnId,
   RunId,
+  ServerSettingsError,
   ThreadId,
   type OrchestrationV2ServerCommand,
   type OrchestrationV2StoredEvent,
   type OrchestrationV2ThreadProjection,
   type ServerProvider,
 } from "@t3tools/contracts";
+import { formatAgentRoleInstruction } from "@t3tools/shared/agentRoleInstructions";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -4437,6 +4440,739 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
   );
 
+  it.effect("keeps a configured role's provider and model when only options are explicit", () =>
+    Effect.gen(function* () {
+      const designId = ProviderInstanceId.make("codex-design");
+      const driver = ProviderDriverKind.make("codex");
+      const inherited = {
+        instanceId: codexInstanceId,
+        model: "gpt-5.4",
+        options: [{ id: "reasoningEffort", value: "high" }],
+      } as const;
+      const roleSelection = {
+        instanceId: designId,
+        model: "design-model",
+        options: [
+          { id: "reasoningEffort", value: "low" },
+          { id: "fastMode", value: true },
+        ],
+      } as const;
+      const override = [{ id: "reasoningEffort", value: "max" }] as const;
+      const cases = [
+        {
+          name: "options merge onto the role baseline",
+          target: { options: override },
+          expected: { ...roleSelection, options: [override[0], roleSelection.options[1]] },
+        },
+        {
+          name: "empty array clears role options",
+          target: { options: [] },
+          expected: { ...roleSelection, options: [] },
+        },
+        {
+          name: "empty object clears role options",
+          target: { options: {} },
+          expected: { ...roleSelection, options: [] },
+        },
+        {
+          name: "explicit model still wins",
+          target: { model: "other-model", options: { reasoningEffort: "max" } },
+          expected: {
+            instanceId: codexInstanceId,
+            model: "other-model",
+            options: override,
+          },
+        },
+      ] as const;
+      for (const testCase of cases) {
+        const commands: Array<unknown> = [];
+        const task = {
+          id: taskId,
+          threadId: parentThreadId,
+          origin: "app_owned",
+          childThreadId,
+          providerInstanceId: testCase.expected.instanceId,
+          model: testCase.expected.model,
+          status: "running",
+          result: null,
+        };
+        const dependencies = Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            hasReceipt: () => Effect.succeed(false),
+            assertProviderInstanceEnabled: () => Effect.void,
+            isProviderInstanceEnabledForProject: () => Effect.succeed(true),
+            getThreadRecords: (threadId) =>
+              Effect.succeed(
+                threadId === parentThreadId
+                  ? parentProjection(commands.length > 0 ? [task] : [], inherited)
+                  : childProjection,
+              ),
+            dispatch: (command) =>
+              Effect.sync(() => {
+                commands.push(command);
+                return {
+                  sequence: 1,
+                  storedEvents: [{ event: { type: "subagent.updated", payload: task } }],
+                } as never;
+              }),
+          }),
+          ServerSettings.layerTest({ agentRoleModels: { design: roleSelection } }),
+          providerRegistryLayer([
+            {
+              ...providerSnapshot({
+                instanceId: codexInstanceId,
+                driver,
+                model: inherited.model,
+              }),
+              models: [inherited.model, "other-model"].map((model) => ({
+                slug: model,
+                name: model,
+                isCustom: false,
+                capabilities: null,
+              })),
+            },
+            providerSnapshot({ instanceId: designId, driver, model: "design-model" }),
+          ]),
+          adapterRegistryLayer([codexInstanceId, designId]),
+          Layer.mock(ProjectService.ProjectService)({}),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        );
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          yield* service.delegateTask(scope, {
+            task: "Review the change.",
+            role: "design",
+            target: yield* decodeTarget(testCase.target),
+            mode: "async",
+            clientRequestId: testCase.name,
+          });
+          assert.deepEqual(
+            (commands[0] as { modelSelection: unknown }).modelSelection,
+            testCase.expected,
+            testCase.name,
+          );
+        }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
+      }
+    }),
+  );
+
+  it.effect(
+    "fails a role launch instead of substituting when its provider or model is unavailable",
+    () =>
+      Effect.gen(function* () {
+        const designId = ProviderInstanceId.make("codex-design");
+        const driver = ProviderDriverKind.make("codex");
+        const inherited = { instanceId: codexInstanceId, model: "gpt-5.4" } as const;
+        const cases = [
+          {
+            name: "missing model",
+            roleSelection: { instanceId: designId, model: "missing-model" },
+            designEnabled: true,
+            expectedCode: "model_unavailable",
+            expectedMessage: `The configured design model missing-model is not offered by ${designId}.`,
+          },
+          {
+            name: "disabled provider",
+            roleSelection: { instanceId: designId, model: "design-model" },
+            designEnabled: false,
+            expectedCode: "provider_unavailable",
+            expectedMessage:
+              "The configured design provider codex-design is disabled for this project.",
+          },
+        ] as const;
+        for (const testCase of cases) {
+          const commands: Array<unknown> = [];
+          const task = {
+            id: taskId,
+            threadId: parentThreadId,
+            origin: "app_owned",
+            childThreadId,
+            providerInstanceId: inherited.instanceId,
+            model: inherited.model,
+            status: "running",
+            result: null,
+          };
+          const dependencies = Layer.mergeAll(
+            NodeServices.layer,
+            NodeCrypto.layer,
+            Layer.mock(ThreadManagementService.ThreadManagementService)({
+              hasReceipt: () => Effect.succeed(false),
+              assertProviderInstanceEnabled: () => Effect.void,
+              isProviderInstanceEnabledForProject: ({ instanceId }) =>
+                Effect.succeed(instanceId !== designId || testCase.designEnabled),
+              getThreadRecords: (threadId) =>
+                Effect.succeed(
+                  threadId === parentThreadId
+                    ? parentProjection(commands.length > 0 ? [task] : [], inherited)
+                    : childProjection,
+                ),
+              dispatch: (command) =>
+                Effect.sync(() => {
+                  commands.push(command);
+                  return {
+                    sequence: 1,
+                    storedEvents: [{ event: { type: "subagent.updated", payload: task } }],
+                  } as never;
+                }),
+            }),
+            ServerSettings.layerTest({ agentRoleModels: { design: testCase.roleSelection } }),
+            providerRegistryLayer([
+              {
+                ...providerSnapshot({
+                  instanceId: codexInstanceId,
+                  driver,
+                  model: inherited.model,
+                }),
+                models: [inherited.model].map((model) => ({
+                  slug: model,
+                  name: model,
+                  isCustom: false,
+                  capabilities: null,
+                })),
+              },
+              providerSnapshot({ instanceId: designId, driver, model: "design-model" }),
+            ]),
+            adapterRegistryLayer([codexInstanceId, designId]),
+            Layer.mock(ProjectService.ProjectService)({}),
+            Layer.mock(SecretRequests.SecretRequests)({}),
+            Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+            Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+          );
+          yield* Effect.gen(function* () {
+            const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+            const error = yield* service
+              .delegateTask(scope, {
+                task: "Review the change.",
+                role: "design",
+                mode: "async",
+                clientRequestId: `role-unavailable-${testCase.name}`,
+              })
+              .pipe(Effect.flip);
+            assert.equal(error.code, testCase.expectedCode, testCase.name);
+            assert.equal(error.message, testCase.expectedMessage, testCase.name);
+            assert.deepEqual(commands, [], testCase.name);
+          }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
+        }
+      }),
+  );
+
+  it.effect("snapshots role instructions into the accepted child task", () =>
+    Effect.gen(function* () {
+      const designId = ProviderInstanceId.make("codex-design");
+      const securityId = ProviderInstanceId.make("codex-security");
+      const driver = ProviderDriverKind.make("codex");
+      const inherited = { instanceId: codexInstanceId, model: "gpt-5.4" } as const;
+      const roleSelection = { instanceId: designId, model: "design-model" } as const;
+      const securitySelection = {
+        instanceId: securityId,
+        model: "security-model",
+        options: [{ id: "effort", value: "xhigh" }],
+      } as const;
+      const exactText = "  Keep the blank line.\n\nAnd this indentation.  ";
+      const cases = [
+        {
+          name: "project override outranks the environment",
+          settings: {
+            agentRoleModels: { design: roleSelection },
+            agentRoleInstructions: { design: "Environment text." },
+            projectSettingsOverrides: {
+              [projectId]: { agentRoleInstructions: { design: exactText } },
+            },
+          },
+          input: { role: "design" as const },
+          expectedModel: roleSelection,
+          expectedText: exactText,
+        },
+        {
+          name: "an explicit model target still receives the role text",
+          settings: {
+            agentRoleModels: { design: roleSelection },
+            agentRoleInstructions: { design: "Explicit target text." },
+          },
+          input: {
+            role: "design" as const,
+            target: { model: "other-model" },
+          },
+          expectedModel: { instanceId: codexInstanceId, model: "other-model" },
+          expectedText: "Explicit target text.",
+        },
+        {
+          name: "an explicit empty string omits the instruction block",
+          settings: { agentRoleInstructions: { design: "" } },
+          input: { role: "design" as const },
+          expectedModel: inherited,
+          expectedText: null,
+        },
+        {
+          name: "the security role keeps its exact model, options, and prompt",
+          settings: {
+            agentRoleModels: { security: securitySelection, review: roleSelection },
+            agentRoleInstructions: { security: "Audit trust boundaries." },
+          },
+          input: { role: "security" as const },
+          expectedModel: securitySelection,
+          expectedText: "Audit trust boundaries.",
+        },
+        {
+          name: "an explicit general role can receive its prompt",
+          settings: { agentRoleInstructions: { general: "General text." } },
+          input: { role: "general" as const },
+          expectedModel: inherited,
+          expectedText: "General text.",
+        },
+        {
+          name: "no role keeps the previous task shape",
+          settings: { agentRoleInstructions: { design: exactText } },
+          input: {},
+          expectedModel: inherited,
+          expectedText: undefined,
+        },
+      ] as const;
+      for (const testCase of cases) {
+        const commands: Array<unknown> = [];
+        const task = {
+          id: taskId,
+          threadId: parentThreadId,
+          origin: "app_owned",
+          childThreadId,
+          providerInstanceId: testCase.expectedModel.instanceId,
+          model: testCase.expectedModel.model,
+          status: "running",
+          result: null,
+        };
+        const dependencies = Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            hasReceipt: () => Effect.succeed(false),
+            assertProviderInstanceEnabled: () => Effect.void,
+            isProviderInstanceEnabledForProject: () => Effect.succeed(true),
+            getThreadRecords: (threadId) =>
+              Effect.succeed(
+                threadId === parentThreadId
+                  ? parentProjection(commands.length > 0 ? [task] : [], inherited)
+                  : childProjection,
+              ),
+            dispatch: (command) =>
+              Effect.sync(() => {
+                commands.push(command);
+                return {
+                  sequence: 1,
+                  storedEvents: [{ event: { type: "subagent.updated", payload: task } }],
+                } as never;
+              }),
+          }),
+          ServerSettings.layerTest(testCase.settings),
+          providerRegistryLayer([
+            {
+              ...providerSnapshot({
+                instanceId: codexInstanceId,
+                driver,
+                model: inherited.model,
+              }),
+              models: [inherited.model, "other-model"].map((model) => ({
+                slug: model,
+                name: model,
+                isCustom: false,
+                capabilities: null,
+              })),
+            },
+            providerSnapshot({ instanceId: designId, driver, model: "design-model" }),
+            providerSnapshot({
+              instanceId: securityId,
+              driver,
+              model: "security-model",
+            }),
+          ]),
+          adapterRegistryLayer([codexInstanceId, designId, securityId]),
+          Layer.mock(ProjectService.ProjectService)({}),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        );
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          yield* service.delegateTask(scope, {
+            task: "Review the change.",
+            ...testCase.input,
+            mode: "async",
+            clientRequestId: testCase.name,
+          });
+          const command = commands[0] as {
+            task: string;
+            modelSelection: { instanceId: string; model: string };
+          };
+          assert.deepEqual(command.modelSelection, testCase.expectedModel, testCase.name);
+          const role = (testCase.input as { role?: "design" | "security" | "general" }).role;
+          const block =
+            testCase.expectedText === null || testCase.expectedText === undefined
+              ? null
+              : formatAgentRoleInstruction(role!, testCase.expectedText);
+          const prefix =
+            role !== undefined && role !== "general"
+              ? `Act as the ${role} sub-agent for this task.\n\n`
+              : "";
+          assert.equal(
+            command.task,
+            `${prefix}${block === null ? "" : `${block}\n\n`}Review the change.`,
+            testCase.name,
+          );
+        }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
+      }
+    }),
+  );
+
+  it.effect("keeps the accepted child task when settings change on a receipt retry", () =>
+    Effect.gen(function* () {
+      const driver = ProviderDriverKind.make("codex");
+      const inherited = { instanceId: codexInstanceId, model: "gpt-5.4" } as const;
+      const commands: Array<{ task: string }> = [];
+      const task = {
+        id: taskId,
+        threadId: parentThreadId,
+        origin: "app_owned",
+        childThreadId,
+        providerInstanceId: codexInstanceId,
+        model: inherited.model,
+        status: "running",
+        result: null,
+      };
+      const stored = {
+        sequence: 1,
+        storedEvents: [{ event: { type: "subagent.updated", payload: task } }],
+      } as never;
+      const dependencies = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          hasReceipt: () => Effect.succeed(commands.length > 0),
+          assertProviderInstanceEnabled: () => Effect.void,
+          isProviderInstanceEnabledForProject: () => Effect.succeed(true),
+          getThreadRecords: (threadId) =>
+            Effect.succeed(
+              threadId === parentThreadId
+                ? parentProjection(commands.length > 0 ? [task] : [], inherited)
+                : childProjection,
+            ),
+          dispatch: (command) =>
+            commands.length > 0
+              ? Effect.succeed(stored)
+              : Effect.sync(() => {
+                  commands.push(command as { task: string });
+                  return stored;
+                }),
+        }),
+        ServerSettings.layerTest({ agentRoleInstructions: { review: "First text." } }),
+        providerRegistryLayer([
+          providerSnapshot({ instanceId: codexInstanceId, driver, model: inherited.model }),
+        ]),
+        adapterRegistryLayer([codexInstanceId]),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const settings = yield* ServerSettings.ServerSettingsService;
+        yield* service.delegateTask(scope, {
+          task: "Review the change.",
+          role: "review",
+          mode: "async",
+          clientRequestId: "role-instructions-retry",
+        });
+        yield* settings.updateSettings({ agentRoleInstructions: { review: "Second text." } });
+        yield* service.delegateTask(scope, {
+          task: "Review the change.",
+          role: "review",
+          mode: "async",
+          clientRequestId: "role-instructions-retry",
+        });
+        assert.equal(commands.length, 1);
+        assert.include(commands[0]!.task, "First text.");
+        assert.notInclude(commands[0]!.task, "Second text.");
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provideMerge(dependencies))));
+    }),
+  );
+
+  it.effect("fails a role-bearing task when settings cannot be read", () =>
+    Effect.gen(function* () {
+      const commands: Array<unknown> = [];
+      const dependencies = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          hasReceipt: () => Effect.succeed(false),
+          assertProviderInstanceEnabled: () => Effect.void,
+          isProviderInstanceEnabledForProject: () => Effect.succeed(true),
+          getThreadRecords: () => Effect.succeed(parentProjection([])),
+          dispatch: (command) =>
+            Effect.sync(() => {
+              commands.push(command);
+              return { sequence: 1, storedEvents: [] } as never;
+            }),
+        }),
+        Layer.mock(ServerSettings.ServerSettingsService)({
+          getSettings: Effect.fail(
+            new ServerSettingsError({ settingsPath: "test-settings", operation: "read-file" }),
+          ),
+        }),
+        providerRegistryLayer([
+          providerSnapshot({
+            instanceId: codexInstanceId,
+            driver: ProviderDriverKind.make("codex"),
+            model: "gpt-5.4",
+          }),
+        ]),
+        adapterRegistryLayer([codexInstanceId]),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+      const error = yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        return yield* service.delegateTask(scope, {
+          task: "Review the change.",
+          role: "review",
+          target: { providerInstanceId: codexInstanceId, model: "other-model" },
+          mode: "async",
+          clientRequestId: "role-settings-unreadable",
+        });
+      }).pipe(
+        Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))),
+        Effect.flip,
+      );
+
+      assert.equal(error.code, "orchestration_error");
+      assert.match(error.message, /Unable to read settings/);
+      assert.equal(commands.length, 0);
+    }),
+  );
+
+  it.effect("replays an accepted role task when settings become unreadable", () =>
+    Effect.gen(function* () {
+      const driver = ProviderDriverKind.make("codex");
+      const inherited = { instanceId: codexInstanceId, model: "gpt-5.4" } as const;
+      const commands: Array<{ task: string }> = [];
+      const settingsReads = yield* Ref.make(0);
+      const settings = {
+        ...DEFAULT_SERVER_SETTINGS,
+        agentRoleInstructions: { review: "First text." },
+      };
+      const task = {
+        id: taskId,
+        threadId: parentThreadId,
+        origin: "app_owned",
+        childThreadId,
+        providerInstanceId: codexInstanceId,
+        model: inherited.model,
+        status: "running",
+        result: null,
+      };
+      const stored = {
+        sequence: 1,
+        storedEvents: [{ event: { type: "subagent.updated", payload: task } }],
+      } as never;
+      const dependencies = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          hasReceipt: () => Effect.succeed(commands.length > 0),
+          assertProviderInstanceEnabled: () => Effect.void,
+          isProviderInstanceEnabledForProject: () => Effect.succeed(true),
+          getThreadRecords: (threadId) =>
+            Effect.succeed(
+              threadId === parentThreadId
+                ? parentProjection(commands.length > 0 ? [task] : [], inherited)
+                : childProjection,
+            ),
+          dispatch: (command) =>
+            commands.length > 0
+              ? Effect.succeed(stored)
+              : Effect.sync(() => {
+                  commands.push(command as { task: string });
+                  return stored;
+                }),
+        }),
+        Layer.mock(ServerSettings.ServerSettingsService)({
+          getSettings: Ref.getAndUpdate(settingsReads, (reads) => reads + 1).pipe(
+            Effect.flatMap((reads) =>
+              reads === 0
+                ? Effect.succeed(settings)
+                : Effect.fail(
+                    new ServerSettingsError({
+                      settingsPath: "test-settings",
+                      operation: "read-file",
+                    }),
+                  ),
+            ),
+          ),
+        }),
+        providerRegistryLayer([
+          providerSnapshot({ instanceId: codexInstanceId, driver, model: inherited.model }),
+        ]),
+        adapterRegistryLayer([codexInstanceId]),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        yield* service.delegateTask(scope, {
+          task: "Review the change.",
+          role: "review",
+          mode: "async",
+          clientRequestId: "role-settings-retry",
+        });
+        yield* service.delegateTask(scope, {
+          task: "Review the change.",
+          role: "review",
+          mode: "async",
+          clientRequestId: "role-settings-retry",
+        });
+        assert.equal(commands.length, 1);
+        assert.include(commands[0]!.task, "First text.");
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provideMerge(dependencies))));
+    }),
+  );
+
+  it.effect("fails a role-bearing remote task when role settings cannot be read", () =>
+    Effect.gen(function* () {
+      const remoteEnvironmentId = EnvironmentId.make("environment:mcp-providers-remote");
+      const remoteScope: McpInvocationScope = {
+        ...scope,
+        environmentId: EnvironmentId.make("environment:mcp-providers-caller"),
+      };
+      const dependencies = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          hasReceipt: () => Effect.succeed(false),
+          getThreadRecords: () => Effect.succeed(parentProjection([])),
+        }),
+        Layer.mock(ServerSettings.ServerSettingsService)({
+          getSettings: Effect.fail(
+            new ServerSettingsError({ settingsPath: "test-settings", operation: "read-file" }),
+          ),
+        }),
+        providerRegistryLayer([]),
+        adapterRegistryLayer([]),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({
+          delegate: () => Effect.die("remote delegation must not start without role instructions"),
+        }),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+      const error = yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        return yield* service.delegateTask(remoteScope, {
+          task: "Review the change.",
+          role: "review",
+          target: { environmentId: remoteEnvironmentId },
+          mode: "async",
+          clientRequestId: "remote-role-settings-unreadable",
+        });
+      }).pipe(
+        Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))),
+        Effect.flip,
+      );
+
+      assert.equal(error.code, "orchestration_error");
+      assert.match(error.message, /Unable to read role instructions/);
+    }),
+  );
+
+  it.effect("resolves the same role policy from a nested child thread", () =>
+    Effect.gen(function* () {
+      const designId = ProviderInstanceId.make("codex-design");
+      const driver = ProviderDriverKind.make("codex");
+      const inherited = { instanceId: codexInstanceId, model: "gpt-5.4" } as const;
+      const roleSelection = {
+        instanceId: designId,
+        model: "design-model",
+      } as const;
+      const commands: Array<unknown> = [];
+      const nestedChildThreadId = ThreadId.make("thread:nested-delegate-child");
+      const task = {
+        id: taskId,
+        threadId: childThreadId,
+        origin: "app_owned",
+        childThreadId: nestedChildThreadId,
+        providerInstanceId: designId,
+        model: roleSelection.model,
+        status: "running",
+        result: null,
+      };
+      const baseParent = parentProjection([], inherited);
+      const nestedParent = {
+        ...baseParent,
+        thread: { ...baseParent.thread, id: childThreadId },
+        runs: baseParent.runs.map((entry) => ({ ...entry, threadId: childThreadId })),
+      };
+      const scopeFromChild: McpInvocationScope = {
+        ...scope,
+        thread: { ...scope.thread!, threadId: childThreadId },
+      };
+      const dependencies = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          hasReceipt: () => Effect.succeed(false),
+          assertProviderInstanceEnabled: () => Effect.void,
+          isProviderInstanceEnabledForProject: () => Effect.succeed(true),
+          getThreadRecords: (threadId) =>
+            Effect.succeed(
+              (threadId === childThreadId
+                ? commands.length > 0
+                  ? {
+                      ...nestedParent,
+                      subagents: [task],
+                    }
+                  : nestedParent
+                : childProjection) as never,
+            ),
+          dispatch: (command) =>
+            Effect.sync(() => {
+              commands.push(command);
+              return {
+                sequence: 1,
+                storedEvents: [{ event: { type: "subagent.updated", payload: task } }],
+              } as never;
+            }),
+        }),
+        ServerSettings.layerTest({ agentRoleModels: { design: roleSelection } }),
+        providerRegistryLayer([
+          providerSnapshot({ instanceId: codexInstanceId, driver, model: inherited.model }),
+          providerSnapshot({ instanceId: designId, driver, model: roleSelection.model }),
+        ]),
+        adapterRegistryLayer([codexInstanceId, designId]),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        yield* service.delegateTask(scopeFromChild, {
+          task: "Design the change.",
+          role: "design",
+          mode: "async",
+          clientRequestId: "nested-role",
+        });
+        assert.deepEqual(
+          (commands[0] as { modelSelection: unknown }).modelSelection,
+          roleSelection,
+        );
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
+    }),
+  );
   describe("resolveRuntimeMode", () => {
     const muse = {
       modelSelection: { instanceId: ProviderInstanceId.make("muse"), model: "muse-model" },

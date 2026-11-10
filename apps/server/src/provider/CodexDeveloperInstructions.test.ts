@@ -51,6 +51,7 @@ describe("Codex orchestration context", () => {
       .join("\n");
 
     NodeAssert.ok(orchestration.includes("use your native tool when the child uses your provider"));
+    NodeAssert.ok(orchestration.includes("unless the user explicitly asks for native tooling"));
     NodeAssert.ok(orchestration.includes("`run_in_background:false`"));
     NodeAssert.ok(orchestration.includes("A native type on another provider's model"));
     NodeAssert.ok(

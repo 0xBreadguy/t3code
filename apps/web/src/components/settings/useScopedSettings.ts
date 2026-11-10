@@ -61,7 +61,7 @@ function useRunScopedPlan() {
   return (
     environments: Parameters<typeof writeScopedSettings>[0],
     planner: Parameters<typeof writeScopedSettings>[1],
-    onFailed?: () => void,
+    options?: { readonly onFailed?: () => void; readonly onSaved?: () => void },
   ) => {
     const plan = planner(environments);
     if (plan.unavailableReason) {
@@ -70,7 +70,7 @@ function useRunScopedPlan() {
         title: "Setting not saved",
         description: plan.unavailableReason,
       });
-      onFailed?.();
+      options?.onFailed?.();
       return;
     }
     const save = {};
@@ -112,8 +112,11 @@ function useRunScopedPlan() {
       },
       persistClientSettingsPatch,
     ).then(({ failedEnvironments, savedEnvironments, savedEnvironmentCount }) => {
-      if (failedEnvironments.length === 0) return;
-      onFailed?.();
+      if (failedEnvironments.length === 0) {
+        options?.onSaved?.();
+        return;
+      }
+      options?.onFailed?.();
       toastManager.add({
         type: "error",
         title:
@@ -134,12 +137,15 @@ function useRunScopedPlan() {
 export function useUpdateScopedSettings() {
   const { scope, environments, deviceOnly } = useSettingsScope();
   const run = useRunScopedPlan();
-  /** `onFailed` runs when any target rejects or drops the patch, so a draft can fall back. */
-  return (patch: ScopedSettingsPatch, options?: { readonly onFailed?: () => void }) =>
+  /** `onFailed` runs when any target rejects or drops the patch; `onSaved` only after every target accepted it. */
+  return (
+    patch: ScopedSettingsPatch,
+    options?: { readonly onFailed?: () => void; readonly onSaved?: () => void },
+  ) =>
     run(
       environments,
       (current) => planScopedSettingsPatch(scope, current, patch, { deviceOnly }),
-      options?.onFailed,
+      options,
     );
 }
 
