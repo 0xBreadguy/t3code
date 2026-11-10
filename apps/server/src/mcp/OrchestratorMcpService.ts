@@ -66,6 +66,11 @@ import {
   resolveProjectProviderInstanceEnabled,
   SECRET_REQUEST_UNSAVED_NOTE,
 } from "@t3tools/contracts";
+import {
+  formatAgentRoleInstruction,
+  resolveAgentRoleInstruction,
+} from "@t3tools/shared/agentRoleInstructions";
+import { resolveAgentRoleTarget } from "@t3tools/shared/agentRolePolicy";
 import { getProviderOptionCurrentValue, withLegacyUltracodeEffort } from "@t3tools/shared/model";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
@@ -1277,7 +1282,6 @@ const make = Effect.gen(function* () {
   const gitDriver = yield* GitVcsDriver.GitVcsDriver;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const remoteDelegation = yield* RemoteDelegation.RemoteDelegation;
-
   const requireProject = (projectId: ProjectId) =>
     projects.getById(projectId).pipe(
       Effect.mapError((error) =>
@@ -1565,6 +1569,8 @@ const make = Effect.gen(function* () {
     readonly parent: Pick<OrchestrationV2ThreadProjection, "thread">;
     readonly target: OrchestratorMcpTarget | undefined;
     readonly providers: ReadonlyArray<ServerProvider>;
+    /** The resolved role selection's options replace inherited ones. */
+    readonly optionBaseline?: ReadonlyArray<ProviderOptionSelection> | undefined;
     /** Receipt replays bypass current settings because they start no work. Dispatch must reuse the checked command ID. */
     readonly skipProjectEnablementFilter?: boolean;
   }): Effect.fn.Return<ResolvedTarget, OrchestratorMcpFailure> {
@@ -1659,6 +1665,15 @@ const make = Effect.gen(function* () {
     const advertised = advertisedModel(provider, model);
     const descriptors = advertised?.capabilities?.optionDescriptors;
     const requestedOptions = withLegacyUltracodeEffort(descriptors, input.target?.options);
+    const baselineOptions = input.optionBaseline;
+    const invalidOptions =
+      baselineOptions === undefined ? [] : invalidOptionSelections(baselineOptions, descriptors);
+    if (invalidOptions.length > 0) {
+      return yield* failure(
+        "invalid_request",
+        `Model ${model} on provider ${instanceId} rejected configured options: ${invalidOptions.join(" ")}`,
+      );
+    }
     if (requestedOptions !== undefined) {
       const invalid = invalidOptionSelections(requestedOptions, descriptors);
       if (invalid.length > 0) {
@@ -1673,12 +1688,15 @@ const make = Effect.gen(function* () {
       instanceId === inheritedSelection.instanceId &&
       (advertised?.slug ?? model) ===
         (advertisedModel(provider, inheritedSelection.model)?.slug ?? inheritedSelection.model);
-    let options = inheritsOptions
-      ? knownOptions(
-          withLegacyUltracodeEffort(descriptors, inheritedSelection.options),
-          descriptors,
-        )
-      : undefined;
+    let options =
+      baselineOptions !== undefined
+        ? knownOptions(withLegacyUltracodeEffort(descriptors, baselineOptions), descriptors)
+        : inheritsOptions
+          ? knownOptions(
+              withLegacyUltracodeEffort(descriptors, inheritedSelection.options),
+              descriptors,
+            )
+          : undefined;
     if (requestedOptions !== undefined) {
       const selections = new Map(
         (requestedOptions.length === 0 ? [] : (options ?? [])).map((selection) => [
@@ -2685,10 +2703,53 @@ const make = Effect.gen(function* () {
         yield* requireCapability(callerScope);
         const scope = yield* requireThreadScope(callerScope, "delegate_task");
         // The task's child runs as an ordinary thread there; this thread keeps the task.
-        const { taskId } = yield* remoteDelegation.delegate(scope, {
-          ...input,
-          target: { ...input.target, environmentId },
-        });
+        const role = input.role;
+        const isRetryOfAcceptedRemoteDelegation =
+          input.clientRequestId === undefined
+            ? false
+            : yield* threadManagement.hasReceipt(
+                stableCommandId({
+                  scope,
+                  requestKey: input.clientRequestId,
+                  operation: "remote-delegate",
+                }),
+              );
+        const roleInstructionResult =
+          role === undefined
+            ? undefined
+            : yield* Effect.result(
+                Effect.gen(function* () {
+                  const settings = yield* serverSettings.getSettings;
+                  const { thread } = yield* threadManagement.getThreadRecords(
+                    scope.thread.threadId,
+                    [],
+                  );
+                  return formatAgentRoleInstruction(
+                    role,
+                    resolveAgentRoleInstruction({
+                      settings,
+                      projectId: thread.projectId,
+                      role,
+                    }).text,
+                  );
+                }),
+              );
+        if (roleInstructionResult?._tag === "Failure" && !isRetryOfAcceptedRemoteDelegation) {
+          return yield* failure(
+            "orchestration_error",
+            `Unable to read role instructions: ${errorMessage(roleInstructionResult.failure)}`,
+          );
+        }
+        const roleInstructionBlock =
+          roleInstructionResult?._tag === "Success" ? roleInstructionResult.success : undefined;
+        const { taskId } = yield* remoteDelegation.delegate(
+          scope,
+          {
+            ...input,
+            target: { ...input.target, environmentId },
+          },
+          { roleInstructionBlock },
+        );
         return yield* input.mode === "wait"
           ? awaitTask(scope, taskId, taskId, input.timeoutMs)
           : readTask(scope, taskId, false, true);
@@ -2724,10 +2785,84 @@ const make = Effect.gen(function* () {
         operation: "delegate-task",
       });
       const isRetryOfAcceptedDelegation = yield* threadManagement.hasReceipt(commandId);
+      // An explicit provider/model target wins. Options alone refine the configured
+      // role selection, whose provider/model and option baseline still apply.
+      const hasExplicitModelTarget =
+        input.target?.providerInstanceId !== undefined ||
+        input.target?.driverKind !== undefined ||
+        input.target?.model !== undefined;
+      let roleTarget = input.target;
+      let optionBaseline: ReadonlyArray<ProviderOptionSelection> | undefined;
+      // Instructions resolve even when an explicit target skips model routing.
+      const roleSettingsResult =
+        input.role === undefined ? undefined : yield* Effect.result(serverSettings.getSettings);
+      if (roleSettingsResult?._tag === "Failure" && !isRetryOfAcceptedDelegation) {
+        return yield* failure(
+          "orchestration_error",
+          `Unable to read settings: ${roleSettingsResult.failure.message}`,
+        );
+      }
+      const roleSettings =
+        roleSettingsResult?._tag === "Success" ? roleSettingsResult.success : undefined;
+      if (input.role !== undefined && !hasExplicitModelTarget && roleSettings !== undefined) {
+        const settings = roleSettings;
+        const rolePolicy = resolveAgentRoleTarget({
+          settings,
+          projectId: parent.thread.projectId,
+          role: input.role,
+          explicitTarget: false,
+          providers: providers.map((provider) => ({
+            instanceId: provider.instanceId,
+            enabled: provider.enabled,
+            available: isProviderAvailable(provider),
+            models: provider.models,
+          })),
+        });
+        if (rolePolicy.type === "provider_disabled") {
+          const enabledForProject = yield* threadManagement.isProviderInstanceEnabledForProject({
+            projectId: parent.thread.projectId,
+            instanceId: rolePolicy.instanceId,
+          });
+          return yield* failure(
+            "provider_unavailable",
+            enabledForProject
+              ? `The configured ${input.role} provider ${rolePolicy.instanceId} is unavailable.`
+              : `The configured ${input.role} provider ${rolePolicy.instanceId} is disabled for this project.`,
+          );
+        }
+        if (rolePolicy.type === "model_unavailable") {
+          return yield* failure(
+            "model_unavailable",
+            `The configured ${input.role} model ${rolePolicy.model} is not offered by ${rolePolicy.instanceId}.`,
+          );
+        }
+        if (rolePolicy.type === "use") {
+          const selection = rolePolicy.modelSelection;
+          const enabledForProject = yield* threadManagement.isProviderInstanceEnabledForProject({
+            projectId: parent.thread.projectId,
+            instanceId: selection.instanceId,
+          });
+          if (!enabledForProject) {
+            return yield* failure(
+              "provider_unavailable",
+              `The configured ${input.role} provider ${selection.instanceId} is disabled for this project.`,
+            );
+          }
+          roleTarget = {
+            ...input.target,
+            providerInstanceId: selection.instanceId,
+            model: selection.model,
+          };
+          if (selection.options !== undefined || input.target?.options !== undefined) {
+            optionBaseline = selection.options ?? [];
+          }
+        }
+      }
       const target = yield* resolveTargetRechecking({
         parent,
-        target: input.target,
+        target: roleTarget,
         providers,
+        ...(optionBaseline === undefined ? {} : { optionBaseline }),
         skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
       });
       const runtimeMode = yield* resolveRuntimeMode(
@@ -2781,7 +2916,19 @@ const make = Effect.gen(function* () {
           parentThreadId: scope.thread.threadId,
           parentRunId: parentRun.id,
           parentNodeId: parentRun.rootNodeId,
-          task: taskPrompt(input),
+          task: taskPrompt(
+            input,
+            roleSettings === undefined || input.role === undefined
+              ? undefined
+              : formatAgentRoleInstruction(
+                  input.role,
+                  resolveAgentRoleInstruction({
+                    settings: roleSettings,
+                    projectId: parent.thread.projectId,
+                    role: input.role,
+                  }).text,
+                ),
+          ),
           ...(input.title === undefined ? {} : { title: input.title }),
           modelSelection: target.modelSelection,
           runtimeMode,

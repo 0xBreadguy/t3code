@@ -56,6 +56,7 @@ import {
   latestNativeContextUsage,
 } from "@t3tools/provider-core/server/handoffBudget";
 import { deliverContextHandoffs, withInlineContext } from "./ContextHandoffDelivery.ts";
+import { formatAgentRoleCatalog } from "@t3tools/shared/agentRoleInstructions";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -248,6 +249,7 @@ export const layer: Layer.Layer<
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
     const restoreMissingWorktree = yield* makeRestoreMissingWorktree;
     const turnItemPositions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
+    const serverSettings = yield* ServerSettings.ServerSettingsService;
 
     // Build draining callbacks outside startup scope so they cannot retain full thread history.
     const makeRunControls = (input: {
@@ -914,6 +916,14 @@ export const layer: Layer.Layer<
         session.driver === "claudeAgent" ||
         session.providerSession.capabilities.turns.supportsNativeGoals === true;
       const goalCommand = goalDriver && parseGoalCommand(providerMessage) !== null;
+      // Every provider turn sees this project's compact role catalog. A project
+      // with no role policy gets none, which preserves the native-subagent shape.
+      const roleCatalog = yield* serverSettings.getSettings.pipe(
+        Effect.map((settings) =>
+          formatAgentRoleCatalog({ settings, projectId: projection.thread.projectId }),
+        ),
+        Effect.orElseSucceed(() => null),
+      );
       // The provider turn marks cancellation work delivered; restart continuations use their own text or resume natively.
       const noteContinuation = isRestartNoteContinuation(
         run,
@@ -1866,7 +1876,7 @@ export const layer: Layer.Layer<
             sideChatHandoff === undefined || compact || goalCommand
               ? ""
               : sideChatHandoff.summaryText;
-          const context = [delivery.context, sideChatContext, restartNote]
+          const context = [delivery.context, sideChatContext, restartNote, roleCatalog ?? ""]
             .filter((part) => part !== "")
             .join("\n\n");
           const { restartContinuationOfRunId: _resumedRunId, ...promptedInput } = turnInput;
@@ -1958,7 +1968,8 @@ export const layer: Layer.Layer<
         retryHandoff.attachments.length === 0 &&
         sideChatHandoff === undefined &&
         restartNote === "" &&
-        !noteContinuation
+        !noteContinuation &&
+        roleCatalog === null
           ? session
           : makeDeliverySession(session, startWithHandoffs);
       return runExecution.startRootRun({

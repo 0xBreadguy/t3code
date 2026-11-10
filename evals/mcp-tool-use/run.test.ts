@@ -11,6 +11,7 @@ import {
   ComposerContextId,
   EnvironmentId,
   PreviewAutomationUnavailableError,
+  ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
@@ -710,6 +711,44 @@ it("rebuilds the template from this checkout and sends a child T3's task prompt"
   const prompt = buildMessages(makeSample(childCase, base)).at(-1)?.content.at(-1);
   assert.equal(prompt?.text, taskPrompt({ task: childCase.prompt, role: "implementation" }));
   assert.notEqual(prompt?.text, childCase.prompt);
+});
+
+it("sends the production role catalog only when a case configures role policy", () => {
+  const base = buildBase(template, { model: "claude-sonnet-5-5", keepUserInstructions: false });
+  const withPolicy: McpToolUseCase = {
+    ...childCase,
+    setup: {
+      role: "top",
+      agentRolePolicy: {
+        agentRoleModels: {
+          design: {
+            instanceId: ProviderInstanceId.make("claudeAgent"),
+            model: "claude-sonnet-5-5",
+            options: [{ id: "effort", value: "xhigh" }],
+          },
+        },
+      },
+    },
+    prompt: "Review the checkout screen.",
+  };
+  const withCatalog = buildMessages(makeSample(withPolicy, base)).at(-1)?.content.at(-1)?.text;
+  assert.include(withCatalog, "## Role delegation");
+  assert.include(
+    withCatalog,
+    "claudeAgent/claude-sonnet-5-5, options effort=xhigh (environment default)",
+  );
+  assert.include(withCatalog, "User message:\nReview the checkout screen.");
+  assert.notInclude(withCatalog, "Treat this as a showreel");
+
+  const withoutPolicy: McpToolUseCase = {
+    ...childCase,
+    setup: { role: "top" },
+    prompt: "Review the checkout screen.",
+  };
+  assert.equal(
+    buildMessages(makeSample(withoutPolicy, base)).at(-1)?.content.at(-1)?.text,
+    "Review the checkout screen.",
+  );
 });
 
 it("lists link tools only while a case turns the beta on, and sends chips as T3 projects them", () => {
