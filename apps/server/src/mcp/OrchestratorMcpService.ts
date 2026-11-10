@@ -1636,7 +1636,8 @@ const make = Effect.gen(function* () {
     const advertised = advertisedModel(provider, model);
     const descriptors = advertised?.capabilities?.optionDescriptors;
     const requestedOptions = withLegacyUltracodeEffort(descriptors, input.target?.options);
-    const baselineOptions = input.optionBaseline;
+    // A saved role can still hold the pre-toggle Ultracode effort, so normalize it before validating.
+    const baselineOptions = withLegacyUltracodeEffort(descriptors, input.optionBaseline);
     const invalidOptions =
       baselineOptions === undefined ? [] : invalidOptionSelections(baselineOptions, descriptors);
     if (invalidOptions.length > 0) {
@@ -1661,7 +1662,7 @@ const make = Effect.gen(function* () {
         (advertisedModel(provider, inheritedSelection.model)?.slug ?? inheritedSelection.model);
     let options =
       baselineOptions !== undefined
-        ? knownOptions(withLegacyUltracodeEffort(descriptors, baselineOptions), descriptors)
+        ? knownOptions(baselineOptions, descriptors)
         : inheritsOptions
           ? knownOptions(
               withLegacyUltracodeEffort(descriptors, inheritedSelection.options),
