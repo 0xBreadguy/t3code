@@ -9,12 +9,16 @@ import { FetchHttpClient } from "effect/http";
 import { assert, expect, it } from "@effect/vitest";
 import {
   ComposerContextId,
+  DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   PreviewAutomationUnavailableError,
+  ProjectId,
   ProviderInstanceId,
   ThreadId,
+  type ServerSettings,
 } from "@t3tools/contracts";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
+import { formatAgentRoleCatalog } from "@t3tools/shared/agentRoleInstructions";
 
 import {
   answerToolCall,
@@ -713,8 +717,44 @@ it("rebuilds the template from this checkout and sends a child T3's task prompt"
   assert.notEqual(prompt?.text, childCase.prompt);
 });
 
-it("sends the production role catalog only when a case configures role policy", () => {
+it("decodes a role delegation mode from a case's synthetic policy", () => {
+  const testCase = decodeDeviceCase(
+    JSON.stringify({
+      id: "decode-role-mode",
+      area: "orchestration",
+      kind: "bad",
+      pattern: "decode",
+      experience: "decode",
+      setup: {
+        role: "top",
+        agentRolePolicy: {
+          agentRoleModels: {
+            implementation: { instanceId: "claudeAgent", model: "claude-sonnet-5-5" },
+          },
+          agentRoleDelegationModes: { implementation: "always" },
+        },
+      },
+      prompt: "Do it.",
+      expect: {},
+    }),
+  );
+  assert.deepEqual(testCase.setup.agentRolePolicy?.agentRoleDelegationModes, {
+    implementation: "always",
+  });
+});
+
+it("sends the role catalog only for a top-level case with a configured role model", () => {
   const base = buildBase(template, { model: "claude-sonnet-5-5", keepUserInstructions: false });
+  // Compare against production output so mode wording lives in one place.
+  const catalogFor = (policy: McpToolUseCase["setup"]["agentRolePolicy"]): string => {
+    const catalog = formatAgentRoleCatalog({
+      settings: { ...DEFAULT_SERVER_SETTINGS, ...policy } as ServerSettings,
+      projectId: ProjectId.make("project:acme-eval"),
+      topLevel: true,
+    });
+    if (catalog === null) throw new Error("expected a role catalog");
+    return catalog;
+  };
   const withPolicy: McpToolUseCase = {
     ...childCase,
     setup: {
@@ -731,24 +771,82 @@ it("sends the production role catalog only when a case configures role policy", 
     },
     prompt: "Review the checkout screen.",
   };
+  const preferCatalog = catalogFor(withPolicy.setup.agentRolePolicy);
   const withCatalog = buildMessages(makeSample(withPolicy, base)).at(-1)?.content.at(-1)?.text;
   assert.include(withCatalog, "## Role delegation");
   assert.include(
     withCatalog,
     "claudeAgent/claude-sonnet-5-5, options effort=xhigh (environment default)",
   );
+  assert.include(withCatalog, preferCatalog);
   assert.include(withCatalog, "User message:\nReview the checkout screen.");
   assert.notInclude(withCatalog, "Treat this as a showreel");
+
+  const alwaysCase: McpToolUseCase = {
+    ...withPolicy,
+    setup: {
+      ...withPolicy.setup,
+      agentRolePolicy: {
+        ...withPolicy.setup.agentRolePolicy,
+        agentRoleDelegationModes: { design: "always" },
+      },
+    },
+  };
+  const alwaysCatalog = buildMessages(makeSample(alwaysCase, base)).at(-1)?.content.at(-1)?.text;
+  const alwaysCatalogExpected = catalogFor(alwaysCase.setup.agentRolePolicy);
+  assert.include(alwaysCatalog, alwaysCatalogExpected);
+  // The mode reaches the catalog's entry, not just its shared guidance.
+  const designEntry = (catalog: string) =>
+    catalog.split("\n").find((line) => line.startsWith("- `design`"));
+  assert.notEqual(designEntry(alwaysCatalogExpected), designEntry(preferCatalog));
 
   const withoutPolicy: McpToolUseCase = {
     ...childCase,
     setup: { role: "top" },
     prompt: "Review the checkout screen.",
   };
-  assert.equal(
-    buildMessages(makeSample(withoutPolicy, base)).at(-1)?.content.at(-1)?.text,
-    "Review the checkout screen.",
-  );
+  const noCatalog = buildMessages(makeSample(withoutPolicy, base)).at(-1)?.content.at(-1)?.text;
+  assert.notInclude(noCatalog, "## Role delegation");
+  assert.equal(noCatalog, "Review the checkout screen.");
+
+  const withoutModel: McpToolUseCase = {
+    ...withoutPolicy,
+    setup: {
+      role: "top",
+      agentRolePolicy: {
+        agentRoleInstructions: { design: "Treat this as a showreel." },
+        agentRoleDelegationModes: { design: "always" },
+      },
+    },
+  };
+  const instructionsPrompt = buildMessages(makeSample(withoutModel, base))
+    .at(-1)
+    ?.content.at(-1)?.text;
+  assert.notInclude(instructionsPrompt, "## Role delegation");
+  assert.equal(instructionsPrompt, "Review the checkout screen.");
+
+  const childPrompt = buildMessages(makeSample(childCase, base)).at(-1)?.content.at(-1)?.text;
+  assert.notInclude(childPrompt, "## Role delegation");
+
+  const nativeCase: McpToolUseCase = {
+    ...childCase,
+    setup: { role: "native-subagent", agentRolePolicy: withPolicy.setup.agentRolePolicy },
+  };
+  const nativePrompt = buildMessages(makeSample(nativeCase, base)).at(-1)?.content.at(-1)?.text;
+  assert.notInclude(nativePrompt, "## Role delegation");
+
+  const sideChatCase: McpToolUseCase = {
+    ...childCase,
+    setup: {
+      role: "top",
+      agentRolePolicy: withPolicy.setup.agentRolePolicy,
+      sideChat: { parentThreadId: "11111111-1111-4111-8111-111111111111", digest: ["Parent"] },
+    },
+    prompt: "What does the status function return?",
+  };
+  const sideChatPrompt = buildMessages(makeSample(sideChatCase, base)).at(-1)?.content.at(-1)?.text;
+  assert.notInclude(sideChatPrompt, "## Role delegation");
+  assert.include(sideChatPrompt, "What does the status function return?");
 });
 
 it("lists link tools only while a case turns the beta on, and sends chips as T3 projects them", () => {
@@ -786,7 +884,7 @@ it("lists link tools only while a case turns the beta on, and sends chips as T3 
     },
   };
   const prompt = buildMessages(makeSample(testCase, on)).at(-1)?.content.at(-1);
-  assert.equal(
+  assert.include(
     prompt?.text,
     projectComposerContextForProvider({ text: testCase.prompt, ...testCase.promptContext! }),
   );

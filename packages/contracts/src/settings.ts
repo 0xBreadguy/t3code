@@ -36,6 +36,8 @@ import {
 } from "./model.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import {
+  AgentRoleDelegationModePatch,
+  AgentRoleDelegationModes,
   AgentRoleInstructionPatch,
   AgentRoleInstructions,
   AgentRoleModelSelectionPatch,
@@ -1190,6 +1192,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "textGenerationModelSelection",
   "agentRoleModels",
   "agentRoleInstructions",
+  "agentRoleDelegationModes",
   "threadTitleInstructions",
   "sourceControlWriterModelSelection",
   "reviewGuideModelSelection",
@@ -1232,6 +1235,8 @@ export const ProjectSettingsOverrides = Schema.Struct({
   agentRoleModels: Schema.optionalKey(AgentRoleModelSelections),
   /** Sparse role text map; absent roles inherit the environment map, "" disables extra text. */
   agentRoleInstructions: Schema.optionalKey(AgentRoleInstructions),
+  /** Sparse delegation-mode map; absent roles inherit the environment map. */
+  agentRoleDelegationModes: Schema.optionalKey(AgentRoleDelegationModes),
   threadTitleInstructions: Schema.optionalKey(TrimmedString),
   sourceControlWriterModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   reviewGuideModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
@@ -1444,6 +1449,10 @@ export const ServerSettings = Schema.Struct({
   agentRoleModels: AgentRoleModelSelections.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   /** Environment-wide role instructions. Project role entries inherit from here. */
   agentRoleInstructions: AgentRoleInstructions.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  /** Environment-wide delegation modes. Project role entries inherit from here. */
+  agentRoleDelegationModes: AgentRoleDelegationModes.pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
   fallbackModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -1960,6 +1969,8 @@ export const ServerSettingsPatch = Schema.Struct({
   agentRoleModels: Schema.optionalKey(AgentRoleModelSelectionPatch),
   /** Merges per role under the settings write lock; null clears one role. */
   agentRoleInstructions: Schema.optionalKey(AgentRoleInstructionPatch),
+  /** Merges per role under the settings write lock; null clears one role. */
+  agentRoleDelegationModes: Schema.optionalKey(AgentRoleDelegationModePatch),
   /** merges per project role under the lock; null clears every project role override. */
   projectAgentRoleModels: Schema.optionalKey(
     Schema.Record(ProjectId, Schema.NullOr(AgentRoleModelSelectionPatch)),
@@ -1967,6 +1978,10 @@ export const ServerSettingsPatch = Schema.Struct({
   /** merges per project role under the lock; null clears every project's role instructions. */
   projectAgentRoleInstructions: Schema.optionalKey(
     Schema.Record(ProjectId, Schema.NullOr(AgentRoleInstructionPatch)),
+  ),
+  /** merges per project role under the lock; null clears every project's delegation modes. */
+  projectAgentRoleDelegationModes: Schema.optionalKey(
+    Schema.Record(ProjectId, Schema.NullOr(AgentRoleDelegationModePatch)),
   ),
   threadTitleInstructions: Schema.optionalKey(TrimmedString),
   branchNamingMode: Schema.optionalKey(BranchNamingMode),

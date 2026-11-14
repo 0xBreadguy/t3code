@@ -1896,6 +1896,7 @@ export const layerWsRpc = (
             ? {}
             : { managedPolicy: serverSettings.managedPolicy }),
           agentRoleInstructionDefaults: AGENT_ROLE_INSTRUCTION_DEFAULTS,
+          supportsAgentRoleDelegationModes: true,
           shellResumeCompletionMarker: true,
           shellThreadFamilies: true,
           threadLinkMetadata: true,

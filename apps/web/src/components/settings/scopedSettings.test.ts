@@ -13,6 +13,7 @@ import * as Cause from "effect/Cause";
 import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
+import { AGENT_ROLE_DELEGATION_MODES_UNSUPPORTED_MESSAGE } from "./roleDelegationModes";
 import {
   applyPendingScopedWrites,
   createScopedSettingsWriter,
@@ -50,6 +51,7 @@ function environment(
     loaded?: boolean;
     settings?: Partial<ServerSettings>;
     agentRoleInstructionDefaults?: ReturnType<typeof agentRoleDefaults>;
+    supportsAgentRoleDelegationModes?: boolean;
   } = {},
 ) {
   return {
@@ -66,6 +68,9 @@ function environment(
             ...(options.agentRoleInstructionDefaults === undefined
               ? {}
               : { agentRoleInstructionDefaults: options.agentRoleInstructionDefaults }),
+            ...(options.supportsAgentRoleDelegationModes === undefined
+              ? {}
+              : { supportsAgentRoleDelegationModes: options.supportsAgentRoleDelegationModes }),
           },
   };
 }
@@ -435,6 +440,98 @@ describe("scoped settings writes", () => {
         },
       },
     });
+  });
+
+  it("merges project delegation-mode overrides per role and preserves unknown roles", () => {
+    const withModes = environment("Server", {
+      supportsAgentRoleDelegationModes: true,
+      settings: {
+        agentRoleDelegationModes: { review: "always", futureRole: "always" },
+        projectSettingsOverrides: {
+          [projectId]: {
+            agentRoleDelegationModes: { implementation: "always", futureRole: "prefer" },
+          },
+        },
+      },
+    });
+    expect(
+      planScopedSettingsPatch(project, [withModes], {
+        agentRoleDelegationModes: { review: "always" },
+      }).serverWrites[0]?.patch,
+    ).toEqual({
+      projectSettingsOverrides: {
+        [projectId]: {
+          agentRoleDelegationModes: {
+            implementation: "always",
+            futureRole: "prefer",
+            review: "always",
+          },
+        },
+      },
+    });
+    expect(
+      planScopedSettingsPatch(project, [withModes], {
+        agentRoleDelegationModes: { implementation: null },
+      }).serverWrites[0]?.patch,
+    ).toEqual({
+      projectSettingsOverrides: {
+        [projectId]: { agentRoleDelegationModes: { futureRole: "prefer" } },
+      },
+    });
+
+    const onlyRole = environment("Server", {
+      supportsAgentRoleDelegationModes: true,
+      settings: {
+        projectSettingsOverrides: {
+          [projectId]: { agentRoleDelegationModes: { implementation: "always" } },
+        },
+      },
+    });
+    expect(
+      planScopedSettingsPatch(project, [onlyRole], {
+        agentRoleDelegationModes: { implementation: null },
+      }).serverWrites[0]?.patch,
+    ).toEqual({ projectSettingsOverrides: { [projectId]: {} } });
+  });
+
+  it("sends delegation modes only to environments that advertise support", () => {
+    const modern = environment("Modern", { supportsAgentRoleDelegationModes: true });
+    const legacy = environment("Legacy");
+    const patch = { agentRoleDelegationModes: { review: "always" as const } };
+
+    const envPlan = planScopedSettingsPatch(
+      resolveSettingsScope({}, [], [modern, legacy]),
+      [modern, legacy],
+      patch,
+    );
+    expect(envPlan.serverWrites.map(({ environmentId }) => environmentId)).toEqual([
+      modern.environmentId,
+    ]);
+    expect(envPlan.serverWrites[0]?.patch).toEqual(patch);
+    expect(
+      planScopedSettingsPatch(resolveSettingsScope({}, [], [legacy]), [legacy], patch),
+    ).toMatchObject({
+      serverWrites: [],
+      unavailableReason: AGENT_ROLE_DELEGATION_MODES_UNSUPPORTED_MESSAGE,
+    });
+
+    const projectPlan = planScopedSettingsPatch(
+      project,
+      [environment("Server", { supportsAgentRoleDelegationModes: true }), environment("Laptop")],
+      patch,
+    );
+    expect(projectPlan.serverWrites).toEqual([
+      {
+        environmentId: server.environmentId,
+        label: server.label,
+        previous: expect.anything(),
+        patch: {
+          projectSettingsOverrides: {
+            [projectId]: { agentRoleDelegationModes: { review: "always" } },
+          },
+        },
+      },
+    ]);
   });
 
   it("sends the security role only to environments that advertise it", () => {

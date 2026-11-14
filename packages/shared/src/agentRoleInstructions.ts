@@ -1,11 +1,12 @@
-import type { AgentRole, ModelSelection, ProjectId, ServerSettings } from "@t3tools/contracts";
+import type {
+  AgentRole,
+  AgentRoleDelegationMode,
+  ModelSelection,
+  ProjectId,
+  ServerSettings,
+} from "@t3tools/contracts";
 
-import {
-  DELEGABLE_AGENT_ROLES,
-  hasDelegableAgentRolePolicy,
-  resolveAgentRoleModel,
-  type DelegableAgentRole,
-} from "./agentRolePolicy.ts";
+import { activeAgentRoles, type DelegableAgentRole } from "./agentRolePolicy.ts";
 
 /**
  * Production built-ins. Each describes an expert identity and quality bar only;
@@ -108,49 +109,51 @@ function formatModelOptions(options: ModelSelection["options"]): string {
     : `, options ${entries.map(([id, value]) => `${id}=${String(value)}`).join(", ")}`;
 }
 
+const DELEGATION_MODE_TEXT: Readonly<Record<AgentRoleDelegationMode, string>> = {
+  prefer:
+    "Prefer delegation for substantive, scoped work; handle simple questions and small, contained changes directly.",
+  always: "Always delegate actual work that matches this role, even when you could do it yourself.",
+};
+
 /**
- * A compact per-turn catalog for an ordinary parent: which delegable roles
- * exist, what this project's effective policy configures, and that only a T3
- * managed `delegate_task(role)` applies that policy. Full role pre-prompts stay
- * on the child and are never repeated here.
+ * A compact per-turn catalog for a top-level thread with at least one active
+ * role. No effective model means no catalog; children and side chats get none.
  */
 export function formatAgentRoleCatalog(input: {
   readonly settings: Pick<
     ServerSettings,
-    "agentRoleModels" | "agentRoleInstructions" | "projectSettingsOverrides"
+    | "agentRoleModels"
+    | "agentRoleInstructions"
+    | "agentRoleDelegationModes"
+    | "projectSettingsOverrides"
   >;
   readonly projectId: ProjectId;
+  /** True only for a top-level listed thread, never a child, native subagent, or side chat. */
+  readonly topLevel: boolean;
 }): string | null {
-  if (!hasDelegableAgentRolePolicy(input)) return null;
-  const entries = DELEGABLE_AGENT_ROLES.map((role) => {
-    const model = resolveAgentRoleModel({
-      settings: input.settings,
-      projectId: input.projectId,
-      role,
-    });
+  if (!input.topLevel) return null;
+  const roles = activeAgentRoles({ settings: input.settings, projectId: input.projectId });
+  if (roles.length === 0) return null;
+  const entries = roles.map((active) => {
     const instruction = resolveAgentRoleInstruction({
       settings: input.settings,
       projectId: input.projectId,
-      role,
+      role: active.role,
     });
-    const configured: string[] = [];
-    if (model !== null) {
-      const source = model.source === "project_role" ? "project override" : "environment default";
-      configured.push(
-        `${model.modelSelection.instanceId}/${model.modelSelection.model}${formatModelOptions(model.modelSelection.options)} (${source})`,
-      );
-    }
+    const source = active.source === "project_role" ? "project override" : "environment default";
+    const configured = [
+      `${active.modelSelection.instanceId}/${active.modelSelection.model}${formatModelOptions(active.modelSelection.options)} (${source})`,
+    ];
     if (instruction.source !== "built_in") {
       configured.push(
         instruction.text === "" ? "role preamble disabled" : "custom role instructions",
       );
     }
-    const detail = configured.length === 0 ? "" : ` Configured: ${configured.join("; ")}.`;
-    return `- \`${role}\`: ${DELEGABLE_ROLE_SCOPES[role]}${detail}`;
+    return `- \`${active.role}\`: ${DELEGABLE_ROLE_SCOPES[active.role]} ${DELEGATION_MODE_TEXT[active.delegationMode]} Configured: ${configured.join("; ")}.`;
   });
   return [
     "## Role delegation",
-    "Choose the role from the work when you delegate. For a task that belongs to a role below, call `delegate_task` with `role`; T3 applies that role's configured model and instruction preamble to the child, and a native subagent cannot. A role changes the child's model and standard of work only: it never widens the task, grants permissions, or asks for extra agents. An explicit user-named model or provider still wins. Use a native tool only when no role applies or the user explicitly asks for native tooling. Omit `target` to use the role's configured model, or this thread's model when the role has none.",
+    "Before choosing to do work directly, check the configured roles below, then apply each role's mode: an `always` role takes actual matching work, so call `delegate_task` with `role`, while a `prefer` role leaves small, direct work to your judgment. An actual requested security audit or review matches `security`; a mere mention of security, or a simple explanatory question, does not. Only T3 applies the role's configured model and instructions to the child; a native subagent cannot. The user's explicit instruction wins: a named model or provider overrides the role's model, a request to do the work in this thread skips delegation, and a request for native tooling uses your native tool. A role changes the child's model and standard of work only: it never widens the task, grants permissions, or asks for extra agents. Omit `target` to use the role's configured model.",
     ...entries,
   ].join("\n");
 }

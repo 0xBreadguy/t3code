@@ -166,10 +166,35 @@ describe("formatAgentRoleCatalog", () => {
   });
 
   it("stays out of an untouched project's prompt", () => {
-    expect(formatAgentRoleCatalog({ settings: settings(), projectId })).toBeNull();
+    expect(formatAgentRoleCatalog({ settings: settings(), projectId, topLevel: true })).toBeNull();
   });
 
-  it("lists the effective project policy, its source, and managed routing", () => {
+  it("stays out of a delegated child's prompt even with a configured role", () => {
+    expect(
+      formatAgentRoleCatalog({
+        settings: settings({
+          agentRoleModels: { implementation: model("codex", "gpt-6-sol") },
+        }),
+        projectId,
+        topLevel: false,
+      }),
+    ).toBeNull();
+  });
+
+  it("does not activate a role from instructions or a delegation mode alone", () => {
+    expect(
+      formatAgentRoleCatalog({
+        settings: settings({
+          agentRoleInstructions: { review: "", design: "Environment text." },
+          agentRoleDelegationModes: { review: "always", design: "always" },
+        }),
+        projectId,
+        topLevel: true,
+      }),
+    ).toBeNull();
+  });
+
+  it("checks only configured roles before choosing direct work", () => {
     const design = {
       ...model("claudeAgent", "claude-sonnet-5-5"),
       options: [{ id: "effort", value: "xhigh" }],
@@ -185,10 +210,14 @@ describe("formatAgentRoleCatalog", () => {
         },
       }),
       projectId,
+      topLevel: true,
     });
 
     expect(text).toContain("## Role delegation");
-    expect(text).toContain("`delegate_task` with `role`");
+    expect(text).toContain("check the configured roles below");
+    expect(text).toContain("then apply each role's mode");
+    expect(text).toContain("a `prefer` role leaves small, direct work to your judgment");
+    expect(text).not.toContain("when the work matches a role, call `delegate_task`");
     expect(text).toContain("a native subagent cannot");
     expect(text).toContain(
       "`design`: UI, interaction, visual, motion, and design-quality work or audits.",
@@ -198,11 +227,54 @@ describe("formatAgentRoleCatalog", () => {
     );
     expect(text).toContain("custom role instructions");
     expect(text).toContain("codex/gpt-6-sol (environment default)");
-    // A configured code role stays distinct from design.
-    expect(text).toContain("`review`: Code review for correctness");
+    // An unconfigured role stays inactive, so the model cannot route to it here.
+    expect(text).not.toContain("`review`");
     // The child's long pre-prompt is not repeated in the parent's catalog.
     expect(text).not.toContain("Treat this as a showreel");
     expect(text).not.toContain("Hold the visual bar.");
+  });
+
+  it("defaults to prefer and honors an always role", () => {
+    const text = formatAgentRoleCatalog({
+      settings: settings({
+        agentRoleModels: { implementation: model("codex", "gpt-6-sol") },
+        agentRoleDelegationModes: { implementation: "always" },
+      }),
+      projectId,
+      topLevel: true,
+    });
+    expect(text).toContain(
+      "Always delegate actual work that matches this role, even when you could do it yourself.",
+    );
+    expect(text).toContain("an `always` role takes actual matching work");
+    expect(text).not.toContain("Prefer delegation for substantive, scoped work");
+  });
+
+  it("inherits the environment mode and lets a project entry override it", () => {
+    const prefer = formatAgentRoleCatalog({
+      settings: settings({
+        agentRoleModels: { review: model("codex", "gpt-6-sol") },
+        agentRoleDelegationModes: { review: "always" },
+        projectSettingsOverrides: {
+          [projectId]: { agentRoleDelegationModes: { review: "prefer" } },
+        },
+      }),
+      projectId,
+      topLevel: true,
+    });
+    expect(prefer).toContain("Prefer delegation for substantive, scoped work");
+
+    const inherited = formatAgentRoleCatalog({
+      settings: settings({
+        agentRoleModels: { review: model("codex", "gpt-6-sol") },
+        agentRoleDelegationModes: { review: "always" },
+      }),
+      projectId,
+      topLevel: true,
+    });
+    expect(inherited).toContain(
+      "Always delegate actual work that matches this role, even when you could do it yourself.",
+    );
   });
 
   it("routes explicit security work to security without folding it into review", () => {
@@ -215,10 +287,14 @@ describe("formatAgentRoleCatalog", () => {
         agentRoleModels: { security, review: model("codex", "gpt-6-sol") },
       }),
       projectId,
+      topLevel: true,
     });
 
     expect(text).toContain(
       "`security`: Security research, threat modeling, vulnerability assessment, auth and trust-boundary review, and hardening.",
+    );
+    expect(text).toContain(
+      "An actual requested security audit or review matches `security`; a mere mention of security, or a simple explanatory question, does not.",
     );
     expect(text).toContain(
       "claudeAgent/claude-sonnet-5-5, options effort=xhigh (environment default)",
@@ -238,6 +314,7 @@ describe("formatAgentRoleCatalog", () => {
         },
       }),
       projectId,
+      topLevel: true,
     });
 
     expect(text).toContain("claudeAgent/general-model");
@@ -245,16 +322,17 @@ describe("formatAgentRoleCatalog", () => {
     expect(text).not.toContain("not-delegable");
   });
 
-  it("treats a customized instruction entry as policy and shows a disabled preamble", () => {
+  it("shows a customized instruction entry on a configured role, including a disabled preamble", () => {
     const text = formatAgentRoleCatalog({
-      settings: settings({ agentRoleInstructions: { review: "", design: "Environment text." } }),
+      settings: settings({
+        agentRoleModels: { review: model("codex", "gpt-6-sol") },
+        agentRoleInstructions: { review: "" },
+      }),
       projectId,
+      topLevel: true,
     });
-    expect(text).not.toBeNull();
     expect(text).toContain("`review`");
     expect(text).toContain("role preamble disabled");
-    expect(text).toContain("`design`");
-    expect(text).toContain("custom role instructions");
   });
 });
 

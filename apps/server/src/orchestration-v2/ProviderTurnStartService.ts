@@ -12,6 +12,8 @@ import {
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
   isCompactionCommandMessage,
+  isDelegatedAppThread,
+  isListedThreadLineage,
   parseGoalCommand,
   RunId,
   RunAttemptId,
@@ -916,11 +918,19 @@ export const layer: Layer.Layer<
         session.driver === "claudeAgent" ||
         session.providerSession.capabilities.turns.supportsNativeGoals === true;
       const goalCommand = goalDriver && parseGoalCommand(providerMessage) !== null;
-      // Every provider turn sees this project's compact role catalog. A project
-      // with no role policy gets none, which preserves the native-subagent shape.
+      // A top-level provider turn sees this project's compact role catalog when
+      // at least one role has an effective model. Delegated children, native
+      // subagents, and side chats get none; a child finishes its own task
+      // instead of delegating again.
       const roleCatalog = yield* serverSettings.getSettings.pipe(
         Effect.map((settings) =>
-          formatAgentRoleCatalog({ settings, projectId: projection.thread.projectId }),
+          formatAgentRoleCatalog({
+            settings,
+            projectId: projection.thread.projectId,
+            topLevel:
+              isListedThreadLineage(projection.thread.lineage) &&
+              !isDelegatedAppThread(projection.thread),
+          }),
         ),
         Effect.orElseSucceed(() => null),
       );

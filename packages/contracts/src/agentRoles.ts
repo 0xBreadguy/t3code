@@ -47,6 +47,41 @@ export const AgentRoleModelSelectionPatch = Schema.Struct({
 });
 export type AgentRoleModelSelectionPatch = typeof AgentRoleModelSelectionPatch.Type;
 
+/** How a configured role asks its parent to route matching work. Defaults to `prefer`. */
+export const AgentRoleDelegationMode = Schema.Literals(["prefer", "always"]);
+export type AgentRoleDelegationMode = typeof AgentRoleDelegationMode.Type;
+export const DEFAULT_AGENT_ROLE_DELEGATION_MODE: AgentRoleDelegationMode = "prefer";
+
+const AgentRoleDelegationModeKeys = {
+  architecture: Schema.optionalKey(AgentRoleDelegationMode),
+  implementation: Schema.optionalKey(AgentRoleDelegationMode),
+  research: Schema.optionalKey(AgentRoleDelegationMode),
+  review: Schema.optionalKey(AgentRoleDelegationMode),
+  security: Schema.optionalKey(AgentRoleDelegationMode),
+  design: Schema.optionalKey(AgentRoleDelegationMode),
+  test: Schema.optionalKey(AgentRoleDelegationMode),
+  general: Schema.optionalKey(AgentRoleDelegationMode),
+} as const;
+
+/** Sparse by design: an absent role inherits the next scope. Unknown role keys round-trip. */
+export const AgentRoleDelegationModes = Schema.StructWithRest(
+  Schema.Struct(AgentRoleDelegationModeKeys),
+  [Schema.Record(Schema.String, Schema.Unknown)],
+);
+export type AgentRoleDelegationModes = typeof AgentRoleDelegationModes.Type;
+
+export const AgentRoleDelegationModePatch = Schema.Struct({
+  architecture: Schema.optionalKey(Schema.NullOr(AgentRoleDelegationMode)),
+  implementation: Schema.optionalKey(Schema.NullOr(AgentRoleDelegationMode)),
+  research: Schema.optionalKey(Schema.NullOr(AgentRoleDelegationMode)),
+  review: Schema.optionalKey(Schema.NullOr(AgentRoleDelegationMode)),
+  security: Schema.optionalKey(Schema.NullOr(AgentRoleDelegationMode)),
+  design: Schema.optionalKey(Schema.NullOr(AgentRoleDelegationMode)),
+  test: Schema.optionalKey(Schema.NullOr(AgentRoleDelegationMode)),
+  general: Schema.optionalKey(Schema.NullOr(AgentRoleDelegationMode)),
+});
+export type AgentRoleDelegationModePatch = typeof AgentRoleDelegationModePatch.Type;
+
 /** Stored byte-for-byte; never trimmed or normalized. An empty string disables extra text. */
 export const AGENT_ROLE_INSTRUCTION_MAX_LENGTH = 8_000;
 

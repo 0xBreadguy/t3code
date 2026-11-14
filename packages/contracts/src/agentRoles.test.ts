@@ -4,6 +4,8 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   AGENT_ROLE_INSTRUCTION_MAX_LENGTH,
   AgentRole,
+  AgentRoleDelegationModePatch,
+  AgentRoleDelegationModes,
   AgentRoleInstructionDefaults,
   AgentRoleInstructionPatch,
   AgentRoleInstructions,
@@ -90,5 +92,28 @@ describe("security role schema compatibility", () => {
       "test",
       "general",
     ]);
+  });
+});
+
+describe("agent role delegation mode schema", () => {
+  const decodeModes = Schema.decodeUnknownSync(AgentRoleDelegationModes);
+  const decodePatch = Schema.decodeUnknownSync(AgentRoleDelegationModePatch);
+
+  it("accepts prefer and always and rejects other values", () => {
+    expect(decodeModes({ review: "prefer", design: "always" })).toEqual({
+      review: "prefer",
+      design: "always",
+    });
+    expect(() => decodeModes({ review: "sometimes" })).toThrow();
+  });
+
+  it("round-trips unknown role keys and null clears from a patch", () => {
+    expect(decodeModes({ review: "always", future_role: "always" })).toMatchObject({
+      future_role: "always",
+    });
+    expect(decodePatch({ review: null, design: "always" })).toEqual({
+      review: null,
+      design: "always",
+    });
   });
 });
