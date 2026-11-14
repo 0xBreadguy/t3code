@@ -6,7 +6,10 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
+  activeAgentRoles,
+  effectiveAgentRoleDelegationModes,
   effectiveAgentRoleModels,
+  resolveAgentRoleDelegationMode,
   resolveAgentRoleModel,
   resolveAgentRoleTarget,
 } from "./agentRolePolicy.ts";
@@ -110,6 +113,95 @@ describe("resolveAgentRoleModel", () => {
         role: "security",
       }),
     ).toEqual({ modelSelection: security, source: "environment_role" });
+  });
+});
+
+describe("resolveAgentRoleDelegationMode", () => {
+  it("defaults to prefer, then inherits the environment, then the project entry", () => {
+    expect(
+      resolveAgentRoleDelegationMode({
+        settings: DEFAULT_SERVER_SETTINGS,
+        projectId,
+        role: "review",
+      }),
+    ).toBe("prefer");
+    expect(
+      resolveAgentRoleDelegationMode({
+        settings: settings({ agentRoleDelegationModes: { review: "always" } }),
+        projectId,
+        role: "review",
+      }),
+    ).toBe("always");
+    expect(
+      resolveAgentRoleDelegationMode({
+        settings: settings({
+          agentRoleDelegationModes: { review: "always" },
+          projectSettingsOverrides: {
+            [projectId]: { agentRoleDelegationModes: { review: "prefer" } },
+          },
+        }),
+        projectId,
+        role: "review",
+      }),
+    ).toBe("prefer");
+  });
+
+  it("merges the sparse project map over the environment map for display", () => {
+    expect(
+      effectiveAgentRoleDelegationModes(
+        settings({
+          agentRoleDelegationModes: { review: "always", design: "always" },
+          projectSettingsOverrides: {
+            [projectId]: { agentRoleDelegationModes: { review: "prefer" } },
+          },
+        }),
+        projectId,
+      ),
+    ).toEqual({ review: "prefer", design: "always" });
+  });
+});
+
+describe("activeAgentRoles", () => {
+  it("activates only roles with an effective model", () => {
+    expect(
+      activeAgentRoles({
+        settings: settings({
+          agentRoleModels: { review },
+          agentRoleInstructions: { design: "Environment text." },
+          agentRoleDelegationModes: { architecture: "always" },
+        }),
+        projectId,
+      }),
+    ).toEqual([
+      {
+        role: "review",
+        modelSelection: review,
+        source: "environment_role",
+        delegationMode: "prefer",
+      },
+    ]);
+  });
+
+  it("carries the project source and the inherited delegation mode", () => {
+    expect(
+      activeAgentRoles({
+        settings: settings({
+          agentRoleModels: { architecture },
+          agentRoleDelegationModes: { architecture: "always" },
+          projectSettingsOverrides: {
+            [projectId]: { agentRoleModels: { architecture: review } },
+          },
+        }),
+        projectId,
+      }),
+    ).toEqual([
+      {
+        role: "architecture",
+        modelSelection: review,
+        source: "project_role",
+        delegationMode: "always",
+      },
+    ]);
   });
 });
 

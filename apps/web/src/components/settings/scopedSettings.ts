@@ -1,4 +1,5 @@
 import {
+  type AgentRoleDelegationModePatch,
   type AgentRoleInstructionDefaults,
   type AgentRoleInstructionPatch,
   type AgentRoleModelSelectionPatch,
@@ -29,6 +30,7 @@ import * as Equal from "effect/Equal";
 import * as Cause from "effect/Cause";
 import { Atom } from "effect/reactivity";
 
+import { AGENT_ROLE_DELEGATION_MODES_UNSUPPORTED_MESSAGE } from "./roleDelegationModes";
 import type { ResolvedSettingsScope } from "./settingsScope";
 
 export type ScopedSettingsPatch = ServerSettingsPatch & ClientSettingsPatch;
@@ -40,6 +42,7 @@ interface ScopedSettingsEnvironment {
   readonly serverConfig: {
     readonly settings: ServerSettings;
     readonly agentRoleInstructionDefaults?: AgentRoleInstructionDefaults | undefined;
+    readonly supportsAgentRoleDelegationModes?: boolean | undefined;
   } | null;
 }
 
@@ -131,29 +134,48 @@ function supportsSecurityRole(
   return environment.serverConfig?.agentRoleInstructionDefaults?.security !== undefined;
 }
 
-function withoutSecurity<T extends object>(value: T): T {
-  const next = { ...value } as Record<string, unknown>;
-  delete next.security;
-  return next as T;
+/** Servers before delegation modes dropped the key silently, so they never get one. */
+function supportsDelegationModes(
+  environment: Pick<ScopedSettingsEnvironment, "serverConfig">,
+): boolean {
+  return environment.serverConfig?.supportsAgentRoleDelegationModes === true;
 }
 
-/** Snapshot servers drop an unknown role, so a destination that lacks it gets no security write. */
-function restrictSecurityPatch(
+/** Whether every selected destination can store delegation modes; false hides and guards the control. */
+export function scopedDelegationModesSupported(
+  environments: readonly Pick<ScopedSettingsEnvironment, "serverConfig">[],
+): boolean {
+  return environments.length > 0 && environments.every(supportsDelegationModes);
+}
+
+function withoutKey(value: object, key: string): Record<string, unknown> {
+  const next = { ...value } as Record<string, unknown>;
+  delete next[key];
+  return next;
+}
+
+/** Snapshot servers drop unknown keys, so a destination that cannot store part of a patch gets none of it. */
+function restrictPatchForDestination(
   patch: ServerSettingsPatch,
-  supported: boolean,
+  environment: Pick<ScopedSettingsEnvironment, "serverConfig">,
 ): ServerSettingsPatch | null {
-  if (supported) return patch;
+  const securitySupported = supportsSecurityRole(environment);
+  const modesSupported = supportsDelegationModes(environment);
+  if (securitySupported && modesSupported) return patch;
   const next: Record<string, unknown> = { ...patch };
-  if (isPlainObject(next.agentRoleModels)) {
-    const roles = withoutSecurity(next.agentRoleModels as Record<string, unknown>);
-    if (Object.keys(roles).length === 0) delete next.agentRoleModels;
-    else next.agentRoleModels = roles;
+  if (!securitySupported) {
+    if (isPlainObject(next.agentRoleModels)) {
+      const roles = withoutKey(next.agentRoleModels, "security");
+      if (Object.keys(roles).length === 0) delete next.agentRoleModels;
+      else next.agentRoleModels = roles;
+    }
+    if (isPlainObject(next.agentRoleInstructions)) {
+      const instructions = withoutKey(next.agentRoleInstructions, "security");
+      if (Object.keys(instructions).length === 0) delete next.agentRoleInstructions;
+      else next.agentRoleInstructions = instructions;
+    }
   }
-  if (isPlainObject(next.agentRoleInstructions)) {
-    const instructions = withoutSecurity(next.agentRoleInstructions as Record<string, unknown>);
-    if (Object.keys(instructions).length === 0) delete next.agentRoleInstructions;
-    else next.agentRoleInstructions = instructions;
-  }
+  if (!modesSupported) delete next.agentRoleDelegationModes;
   return Object.keys(next).length === 0 ? null : (next as ServerSettingsPatch);
 }
 
@@ -368,11 +390,9 @@ export function planScopedSettingsPatch(
               scope,
               environments,
               (current, settings, projectId, environment) => {
-                // Security cannot reach a destination that does not advertise it, so
+                // A role or mode a destination cannot store never reaches it, so
                 // filter the incoming patch and keep whatever that entry already saved.
-                const destinationPatch = supportsSecurityRole(environment)
-                  ? serverPatch
-                  : restrictSecurityPatch(serverPatch, false);
+                const destinationPatch = restrictPatchForDestination(serverPatch, environment);
                 if (destinationPatch === null) return undefined;
                 // Override entries store whole objects; complete partial patches from each target's effective
                 // value.
@@ -406,6 +426,24 @@ export function planScopedSettingsPatch(
                     }
                     if (Object.keys(roles).length === 0) delete next.agentRoleModels;
                     else next.agentRoleModels = roles;
+                    continue;
+                  }
+                  // Delegation modes are sparse too; a null patch returns one role to
+                  // the environment and unknown role keys keep round-tripping.
+                  if (key === "agentRoleDelegationModes") {
+                    const roles: Record<string, unknown> = isPlainObject(
+                      current.agentRoleDelegationModes,
+                    )
+                      ? { ...current.agentRoleDelegationModes }
+                      : {};
+                    for (const [role, mode] of Object.entries(
+                      value as AgentRoleDelegationModePatch,
+                    )) {
+                      if (mode === null) delete roles[role];
+                      else if (mode !== undefined) roles[role] = mode;
+                    }
+                    if (Object.keys(roles).length === 0) delete next.agentRoleDelegationModes;
+                    else next.agentRoleDelegationModes = roles;
                     continue;
                   }
                   if (key === "agentRoleInstructions") {
@@ -475,10 +513,7 @@ export function planScopedSettingsPatch(
                     }
                   : serverPatch,
               );
-              const patch = restrictSecurityPatch(
-                destinationPatch,
-                supportsSecurityRole(environment),
-              );
+              const patch = restrictPatchForDestination(destinationPatch, environment);
               return patch === null
                 ? []
                 : [
@@ -496,6 +531,11 @@ export function planScopedSettingsPatch(
   const securityRequested =
     serverPatch.agentRoleModels?.security !== undefined ||
     serverPatch.agentRoleInstructions?.security !== undefined;
+  const delegationModesRequested = serverPatch.agentRoleDelegationModes !== undefined;
+  const delegationModesUnavailable =
+    delegationModesRequested &&
+    connectedEnvironments.length > 0 &&
+    connectedEnvironments.every((environment) => !supportsDelegationModes(environment));
   const unavailableReason =
     hasWrite || Object.keys(patch).length === 0
       ? null
@@ -503,11 +543,13 @@ export function planScopedSettingsPatch(
         ? scope.message
         : securityRequested
           ? "Security roles need a server that advertises them. Update T3 Code on it."
-          : unscopableKeys.length > 0
-            ? "This setting is environment-wide and cannot be overridden by a project."
-            : isProjectScope
-              ? "Connect the selected checkouts, or update their environments, to save a project override."
-              : `Connect ${scope.kind === "environment" ? scope.label : "an environment"} to save this setting.`;
+          : delegationModesUnavailable
+            ? AGENT_ROLE_DELEGATION_MODES_UNSUPPORTED_MESSAGE
+            : unscopableKeys.length > 0
+              ? "This setting is environment-wide and cannot be overridden by a project."
+              : isProjectScope
+                ? "Connect the selected checkouts, or update their environments, to save a project override."
+                : `Connect ${scope.kind === "environment" ? scope.label : "an environment"} to save this setting.`;
   return { clientPatch, hasClientWrite, serverWrites, unavailableReason };
 }
 

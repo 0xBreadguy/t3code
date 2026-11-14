@@ -1,5 +1,7 @@
 import type { ModelPreferences } from "@t3tools/contracts/settings";
 import {
+  type AgentRoleDelegationModePatch,
+  type AgentRoleDelegationModes,
   type AgentRoleInstructionPatch,
   type AgentRoleInstructions,
   type AgentRoleModelSelectionPatch,
@@ -327,6 +329,21 @@ function mergeAgentRoleInstructionsPatch(
   return next as AgentRoleInstructions;
 }
 
+function mergeAgentRoleDelegationModesPatch(
+  current: AgentRoleDelegationModes,
+  patch: AgentRoleDelegationModePatch,
+): AgentRoleDelegationModes {
+  const next: Record<string, unknown> = { ...current };
+  for (const [role, mode] of Object.entries(patch)) {
+    if (mode === null) {
+      delete next[role];
+    } else if (mode !== undefined) {
+      next[role] = mode;
+    }
+  }
+  return next as AgentRoleDelegationModes;
+}
+
 function mergeProjectAgentRoleModels(
   current: Readonly<Record<string, ProjectSettingsOverrides>>,
   patch: Readonly<Record<string, AgentRoleModelSelectionPatch | null>>,
@@ -373,6 +390,34 @@ function mergeProjectAgentRoleInstructions(
       ...entry,
       agentRoleInstructions: mergeAgentRoleInstructionsPatch(
         entry.agentRoleInstructions ?? {},
+        rolePatch,
+      ),
+    });
+  }
+  return Object.fromEntries(next);
+}
+
+function mergeProjectAgentRoleDelegationModes(
+  current: Readonly<Record<string, ProjectSettingsOverrides>>,
+  patch: Readonly<Record<string, AgentRoleDelegationModePatch | null>>,
+): Record<string, ProjectSettingsOverrides> {
+  const next = new Map(Object.entries(current));
+  for (const [projectId, rolePatch] of Object.entries(patch)) {
+    if (rolePatch === null) {
+      const entry = next.get(projectId);
+      if (entry === undefined) continue;
+      const withoutModes = Object.fromEntries(
+        Object.entries(entry).filter(([key]) => key !== "agentRoleDelegationModes"),
+      );
+      if (Object.keys(withoutModes).length === 0) next.delete(projectId);
+      else next.set(projectId, withoutModes as ProjectSettingsOverrides);
+      continue;
+    }
+    const entry = next.get(projectId) ?? {};
+    next.set(projectId, {
+      ...entry,
+      agentRoleDelegationModes: mergeAgentRoleDelegationModesPatch(
+        entry.agentRoleDelegationModes ?? {},
         rolePatch,
       ),
     });
@@ -501,6 +546,8 @@ export function applyServerSettingsPatch(
     projectAgentRoleModels: projectAgentRoleModelsPatch,
     agentRoleInstructions: agentRoleInstructionsPatch,
     projectAgentRoleInstructions: projectAgentRoleInstructionsPatch,
+    agentRoleDelegationModes: agentRoleDelegationModesPatch,
+    projectAgentRoleDelegationModes: projectAgentRoleDelegationModesPatch,
     projectAgentBrowserAccessOverrides: _legacyBrowserAccess,
     projectAutoPullOverrides: _legacyAutoPull,
     projectScriptOverrides: _legacyScripts,
@@ -616,6 +663,13 @@ export function applyServerSettingsPatch(
           projectOverridesAfterRoleModels,
           projectAgentRoleInstructionsPatch,
         );
+  const projectOverridesAfterRoleModes =
+    projectAgentRoleDelegationModesPatch === undefined
+      ? nextProjectSettingsOverrides
+      : mergeProjectAgentRoleDelegationModes(
+          nextProjectSettingsOverrides,
+          projectAgentRoleDelegationModesPatch,
+        );
   const nextWithReplacementsBase = {
     ...next,
     favorites,
@@ -704,8 +758,9 @@ export function applyServerSettingsPatch(
       : {}),
     ...(projectSettingsOverridesPatch !== undefined ||
     projectAgentRoleModelsPatch !== undefined ||
-    projectAgentRoleInstructionsPatch !== undefined
-      ? { projectSettingsOverrides: nextProjectSettingsOverrides }
+    projectAgentRoleInstructionsPatch !== undefined ||
+    projectAgentRoleDelegationModesPatch !== undefined
+      ? { projectSettingsOverrides: projectOverridesAfterRoleModes }
       : {}),
     ...(agentRoleModelsPatch !== undefined
       ? {
@@ -717,6 +772,14 @@ export function applyServerSettingsPatch(
           agentRoleInstructions: mergeAgentRoleInstructionsPatch(
             current.agentRoleInstructions,
             agentRoleInstructionsPatch,
+          ),
+        }
+      : {}),
+    ...(agentRoleDelegationModesPatch !== undefined
+      ? {
+          agentRoleDelegationModes: mergeAgentRoleDelegationModesPatch(
+            current.agentRoleDelegationModes,
+            agentRoleDelegationModesPatch,
           ),
         }
       : {}),

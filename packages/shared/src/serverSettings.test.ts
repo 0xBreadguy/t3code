@@ -1240,4 +1240,57 @@ describe("agent role settings", () => {
       }).projectSettingsOverrides[projectId]?.agentRoleInstructions,
     ).toEqual({ architecture: "Project architecture.", review: "Project review." });
   });
+
+  it("merges one role's delegation mode without erasing other roles", () => {
+    const once = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      agentRoleDelegationModes: { review: "always" },
+    });
+    const twice = applyServerSettingsPatch(once, {
+      agentRoleDelegationModes: { design: "always" },
+    });
+    expect(twice.agentRoleDelegationModes).toEqual({ review: "always", design: "always" });
+    expect(
+      applyServerSettingsPatch(twice, { agentRoleDelegationModes: { review: null } })
+        .agentRoleDelegationModes,
+    ).toEqual({ design: "always" });
+    expect(
+      applyServerSettingsPatch(twice, { agentRoleDelegationModes: { review: "prefer" } })
+        .agentRoleDelegationModes,
+    ).toEqual({ review: "prefer", design: "always" });
+  });
+
+  it("keeps an unknown future role key round-tripping through a mode patch", () => {
+    const stored = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      agentRoleDelegationModes: { future_role: "always" } as never,
+    });
+    expect(stored.agentRoleDelegationModes).toMatchObject({ future_role: "always" });
+  });
+
+  it("merges one project's delegation modes and keeps unrelated override keys", () => {
+    const withProject = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      projectSettingsOverrides: {
+        [projectId]: {
+          defaultAutoPull: true,
+          agentRoleDelegationModes: { review: "always" },
+        },
+      },
+    });
+    const withDesign = applyServerSettingsPatch(withProject, {
+      projectAgentRoleDelegationModes: { [projectId]: { design: "always" } },
+    });
+    expect(withDesign.projectSettingsOverrides[projectId]).toMatchObject({
+      defaultAutoPull: true,
+      agentRoleDelegationModes: { review: "always", design: "always" },
+    });
+    expect(
+      applyServerSettingsPatch(withDesign, {
+        projectAgentRoleDelegationModes: { [projectId]: { review: null } },
+      }).projectSettingsOverrides[projectId]?.agentRoleDelegationModes,
+    ).toEqual({ design: "always" });
+    expect(
+      applyServerSettingsPatch(withDesign, {
+        projectAgentRoleDelegationModes: { [projectId]: null },
+      }).projectSettingsOverrides[projectId],
+    ).toEqual({ defaultAutoPull: true });
+  });
 });

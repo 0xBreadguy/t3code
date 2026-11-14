@@ -34,15 +34,47 @@ Check that the case builds with `--dry-run --case <id>`. Then run it on the text
 
 ## Role delegation cases
 
-`setup.agentRolePolicy` carries synthetic role model/instruction settings. The runner passes them to the production `formatAgentRoleCatalog` and appends the result to the turn exactly as T3 does for an ordinary parent. Cases never copy catalog text.
+T3 adds its production role catalog to a top-level turn only when at least one role has a configured model. `setup.agentRolePolicy` carries synthetic role models, instructions and delegation modes; a case with no model gets the unchanged prompt, which is the opt-in boundary the controls check. Cases never copy catalog text, and the runner appends the catalog to `role: "top"` cases that are not side chats. Delegated children and side chats get no catalog; a delegated child finishes its own task instead of delegating again. An explicit native request still routes to the harness's native subagent tool.
 
-| Case                                         | Kind    | What it checks                                                                                                                       |
-| -------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| role-catalog-ui-review-routes-design         | bad     | A requested subagent UI/interaction/visual review selects the configured `design` role through `delegate_task`, not a native child.  |
-| control-role-catalog-explicit-model-wins     | control | A user-named model wins over the configured role model while the Design role and its instructions still apply.                       |
-| control-role-catalog-explicit-native-request | control | An explicit request for native tooling still uses the native child.                                                                  |
-| control-no-role-policy-does-not-delegate     | control | A project with no delegable role policy emits no catalog and handles a small review as ordinary work.                                |
-| role-catalog-security-audit-routes-security  | bad     | An explicit security/hardening audit selects the configured `security` role through `delegate_task`, not a native child or `review`. |
+Historical native-routing guards now request native tooling explicitly. Substantive coding controls in `visual-preview.ndjson` and `threads-vs-tasks.ndjson` that forbid delegation request direct work explicitly, so they test their original routing boundary under configured-role behavior.
+
+The conversational cases check the catalog without role keywords. The delegation cases describe a fix, an investigation, a pre-merge review, and a security review in ordinary language; the controls cover a quick question, an explicit request to do a refactor in the thread, a passing security mention, a quick security question, and a model named in passing. A small change checks that `prefer` allows judgment; the same kind of small change with `always` must delegate, and an explicit direct request still wins over `always`. The existing child guard covers recursion, so these do not repeat it.
+
+The security cases set `security` to `always`, so they cover the critical review path rather than only a configured model. The natural review must delegate, while a passing mention, a quick question, and an explicit direct request still stay in the thread. The no-role-model control checks that an untouched project gains no T3 routing pressure; it does not forbid the native subagent choice the ordinary rules still allow.
+
+```sh
+pnpm mcp-tool-use --case role-natural-implementation-invoice-cache,role-natural-research-audit-writer,role-natural-review-billing-retry,role-natural-security-review-tenant-isolation,control-natural-quick-question-stays-direct,control-natural-do-this-one-here,control-natural-explicit-model-override --samples 3 --out runs/role-natural
+```
+
+| Case                                               | Kind    | What it checks                                                                                                                                     |
+| -------------------------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| role-catalog-ui-review-routes-design               | bad     | A requested subagent UI/interaction/visual review selects the configured `design` role through `delegate_task`, not a native child.                |
+| role-natural-implementation-invoice-cache          | bad     | A conversational bug report that asks for a fix and a regression test selects `implementation`; no role is named.                                  |
+| role-natural-research-audit-writer                 | bad     | A casual "find out what really happens" investigation selects `research` even though its configured model is on another provider.                  |
+| role-natural-review-billing-retry                  | bad     | A pre-merge worry about races and double charges selects `review` while the configured review model is Opus xhigh.                                 |
+| role-natural-security-review-tenant-isolation      | bad     | "Do a security review of …" selects `security`, set to `always`, and inherits its model on another provider; the prompt never asks for a subagent. |
+| role-always-mode-delegates-small-change            | bad     | With `implementation` set to `always`, a tiny rename still goes through `delegate_task`.                                                           |
+| control-role-catalog-explicit-model-wins           | control | A user-named model wins over the configured role model while the Design role and its instructions still apply.                                     |
+| control-role-catalog-explicit-native-request       | control | An explicit request for native tooling still uses the native child.                                                                                |
+| native-agents-for-unasked-parallel-audit           | guard   | An audit explicitly requests native tooling for any parallel reviewers; T3 delegation is forbidden.                                                |
+| subagents-as-you-see-fit-uses-native               | guard   | Explicit native implementation helpers stay native while the requested Sol review uses T3 delegation.                                              |
+| opus-review-too-via-delegate                       | guard   | An explicit native Opus review after a Sol delegate uses `Agent`, not `delegate_task`.                                                             |
+| codex-same-model-subagents-stay-native             | guard   | An explicit request for native subagents on Codex uses `spawn_agent`, not `delegate_task`.                                                         |
+| control-simple-question-stays-direct               | control | An untouched project has no catalog and a one-sentence question stays in the thread.                                                               |
+| control-natural-quick-question-stays-direct        | control | A casual file-and-line question stays in the thread with `research` configured.                                                                    |
+| control-natural-do-this-one-here                   | control | A substantial refactor the user wants done in this thread starts no child even with `implementation` configured.                                   |
+| control-natural-explicit-model-override            | control | "Put it on Opus 5.5 this time" keeps the `design` role and overrides its configured model.                                                         |
+| control-small-change-stays-direct                  | control | A one-line copy fix with its snapshot update stays in the thread under the default `prefer` mode.                                                  |
+| control-explicit-do-it-yourself                    | control | An explicit "do it yourself" instruction wins over a configured implementation role.                                                               |
+| control-always-mode-yields-to-explicit-direct-work | control | The same always-mode rename, asked for in this thread, stays direct; `always` does not outrank the user.                                           |
+| control-no-role-model-does-not-force-delegation    | control | With no role model configured there is no catalog and no T3 role routing; native subagent choice follows the ordinary rules.                       |
+| control-no-role-policy-does-not-delegate           | control | A project with no role models gets no catalog, and a review the user said to do directly stays ordinary work.                                      |
+| control-natural-security-mention-stays-direct      | control | "Our security team asked why…" on a one-sentence docs fix starts no child even with `security` set to `always`.                                    |
+| control-natural-security-question-stays-direct     | control | A quick CSP-header question starts no child even with `security` set to `always`.                                                                  |
+| control-security-explicit-direct-override          | control | An explicit "do it yourself" security review wins over the configured security role even when it is set to `always`.                               |
+| guard-delegated-child-does-not-delegate            | guard   | A delegated child gets no catalog, even with role models configured, and starts no further delegate or native child.                               |
+| control-side-chat-explicit-delegation              | control | A side chat has no catalog, even with `research` configured, but still delegates when the user explicitly asks; absence alone is not child status. |
+| role-catalog-security-audit-routes-security        | bad     | An explicit security/hardening audit selects the configured `security` role through `delegate_task`, not a native child or `review`.               |
 
 ## Device manager cases
 

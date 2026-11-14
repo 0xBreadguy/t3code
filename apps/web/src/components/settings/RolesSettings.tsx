@@ -1,5 +1,6 @@
 import {
   type AgentRole,
+  type AgentRoleDelegationMode,
   type EnvironmentId,
   type ModelSelection,
   type ProviderInstanceId,
@@ -18,10 +19,18 @@ import { useEnvironmentProviders, useEnvironments } from "../../state/environmen
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
+import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
+import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { RoleInstructionsEditor } from "./RoleInstructionsEditor";
 import { roleInstructionScopeKey, type RoleInstructionTarget } from "./roleInstructions";
+import {
+  ROLE_DELEGATION_MODE_LABELS,
+  roleDelegationModeState,
+  type RoleDelegationModeState,
+} from "./roleDelegationModes";
 import { useSettingsScope } from "./SettingsScopeContext";
+import { scopedDelegationModesSupported } from "./scopedSettings";
 import {
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
   SettingResetButton,
@@ -88,6 +97,56 @@ function modelAvailability(
   return null;
 }
 
+function RoleDelegationControl({
+  title,
+  state,
+  onChange,
+  onReset,
+}: {
+  readonly title: string;
+  readonly state: RoleDelegationModeState;
+  readonly onChange: (mode: AgentRoleDelegationMode) => void;
+  readonly onReset: () => void;
+}) {
+  const disabled = state.disabledReason !== null;
+  return (
+    <div className="mt-3 flex flex-col gap-2 @min-[32rem]/settings-row:flex-row @min-[32rem]/settings-row:items-center @min-[32rem]/settings-row:justify-between">
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <span className="text-xs font-medium text-muted-foreground">Delegation</span>
+        <ToggleGroup
+          aria-label={`${title} delegation mode`}
+          variant="segmented"
+          disabled={disabled}
+          value={state.value === null ? [] : [state.value]}
+          onValueChange={([next]) => {
+            if (next === "prefer" || next === "always") onChange(next);
+          }}
+        >
+          {(Object.keys(ROLE_DELEGATION_MODE_LABELS) as AgentRoleDelegationMode[]).map((mode) => (
+            <Toggle key={mode} value={mode}>
+              {ROLE_DELEGATION_MODE_LABELS[mode]}
+            </Toggle>
+          ))}
+        </ToggleGroup>
+        {state.showReset ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={state.resetDisabled}
+            aria-label={`${state.resetLabel} for ${title} delegation`}
+            onClick={onReset}
+          >
+            {state.resetLabel}
+          </Button>
+        ) : null}
+      </div>
+      <p className="min-w-0 text-xs text-muted-foreground">
+        {state.disabledReason ?? state.statusLine}
+      </p>
+    </div>
+  );
+}
+
 function RoleRow({
   role,
   title,
@@ -102,11 +161,14 @@ function RoleRow({
   environmentId,
   environmentLabel,
   modelDisabledReason,
+  delegationState,
   instructionTargets,
   instructionScopeKey,
   projectScope,
   onChange,
   onReset,
+  onDelegationChange,
+  onDelegationReset,
 }: {
   readonly role: AgentRole;
   readonly title: string;
@@ -121,12 +183,15 @@ function RoleRow({
   readonly environmentId: EnvironmentId | null;
   readonly environmentLabel: string;
   readonly modelDisabledReason: (instanceId: ProviderInstanceId, model: string) => string | null;
+  readonly delegationState: RoleDelegationModeState;
   /** Null hides the fold when a selected server cannot persist or advertise instructions. */
   readonly instructionTargets: ReadonlyArray<RoleInstructionTarget> | null;
   readonly instructionScopeKey: string;
   readonly projectScope: boolean;
   readonly onChange: (selection: ModelSelection) => void;
   readonly onReset: () => void;
+  readonly onDelegationChange: (mode: AgentRoleDelegationMode) => void;
+  readonly onDelegationReset: () => void;
 }) {
   const navigate = useNavigate();
   const modelOptions = getCustomModelOptionsByInstance(
@@ -233,6 +298,12 @@ function RoleRow({
         )
       }
     >
+      <RoleDelegationControl
+        title={title}
+        state={delegationState}
+        onChange={onDelegationChange}
+        onReset={onDelegationReset}
+      />
       {instructionTargets === null ? null : (
         <RoleInstructionsEditor
           key={`${role}:${instructionScopeKey}`}
@@ -272,6 +343,10 @@ export function RolesSettings() {
     ),
   );
   const environmentLabel = representative?.label ?? "this environment";
+  // An older server drops the key silently, so guard the whole row's mode control
+  // rather than showing a choice that will not be stored.
+  const delegationModesSupported =
+    connectedEnvironments.length === 0 || scopedDelegationModesSupported(connectedEnvironments);
   const instructionDefaultsByEnvironment = new Map(
     connectedEnvironments.flatMap((environment) => {
       const defaults = environment.serverConfig?.agentRoleInstructionDefaults;
@@ -321,7 +396,7 @@ export function RolesSettings() {
                 : targets.length > 1
                   ? "Model set on selected environments"
                   : `Model set on ${environmentLabel}`
-              : "No model set · uses the default model";
+              : "No model set · role inactive";
         const instructionTargets = isProjectScope
           ? targets.flatMap((candidate) => {
               const builtIn = instructionDefaultsByEnvironment.get(candidate.environmentId)?.[
@@ -364,6 +439,21 @@ export function RolesSettings() {
             });
         const instructionSupported =
           targets.length > 0 && instructionTargets.length === targets.length;
+        const delegationState = roleDelegationModeState({
+          projectScope: isProjectScope,
+          modesSupported: delegationModesSupported,
+          targets: targets.map((candidate) => ({
+            environmentLabel: candidate.label,
+            projectMode:
+              candidate.projectId === null
+                ? undefined
+                : candidate.settings.projectSettingsOverrides[candidate.projectId]
+                    ?.agentRoleDelegationModes?.[row.role],
+            environmentMode: environmentSettingsById.get(candidate.environmentId)
+              ?.agentRoleDelegationModes[row.role],
+            hasModel: effectiveRole(candidate, environmentSettingsById, row.role) !== null,
+          })),
+        });
 
         return (
           <RoleRow
@@ -381,6 +471,7 @@ export function RolesSettings() {
             environmentId={representative?.environmentId ?? null}
             environmentLabel={environmentLabel}
             modelDisabledReason={modelDisabledReason}
+            delegationState={delegationState}
             instructionTargets={instructionSupported ? instructionTargets : null}
             instructionScopeKey={roleInstructionScopeKey({
               scopeKind: scope.kind,
@@ -389,13 +480,25 @@ export function RolesSettings() {
             projectScope={isProjectScope}
             onChange={(next) => updateSettings({ agentRoleModels: { [row.role]: next } })}
             onReset={() => updateSettings({ agentRoleModels: { [row.role]: null } })}
+            onDelegationChange={(mode) =>
+              updateSettings({ agentRoleDelegationModes: { [row.role]: mode } })
+            }
+            onDelegationReset={() =>
+              updateSettings({ agentRoleDelegationModes: { [row.role]: null } })
+            }
           />
         );
       })}
       <div className="space-y-1 px-3 py-2.5 text-xs leading-normal text-muted-foreground sm:px-4">
         <p>
-          These models and instructions apply to T3-managed delegated task work. Your own threads
-          and a provider's own subagents don't use them.
+          These models, delegation modes, and instructions apply to T3-managed delegated task work.
+          Your own threads and a provider's own subagents don't use them.
+        </p>
+        <p>
+          A role is active only when it has a model. With no role models set, nothing changes; with
+          one or more, T3-managed parents check these roles before doing the work. Prefer delegates
+          substantial matching work and keeps small changes in the parent thread. Always delegates
+          any matching work.
         </p>
         <p>
           A review or test model does not run anything by itself. Worker check reports stay
