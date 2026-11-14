@@ -11,6 +11,7 @@ import {
   CommandId,
   ContextHandoffId,
   ContextTransferId,
+  EnvironmentId,
   GitCommandError,
   MessageId,
   NodeId,
@@ -502,6 +503,7 @@ function makeLocalCommandHarness(input: {
   readonly historyReadFailureAfterFallback?: unknown;
   readonly resumeFailure?: ProviderAdapter.ProviderAdapterV2Error;
   readonly sessionForTurn?: boolean;
+  readonly threadKind?: "delegated" | "remote-delegated" | "native-subagent" | "fork";
   readonly interruptOpen?: boolean;
   readonly interruptRunBeforeOpenFailure?: boolean;
   readonly writeFailure?: unknown;
@@ -610,7 +612,28 @@ function makeLocalCommandHarness(input: {
       interactionMode: "default",
       branch: input.worktreePath === undefined ? null : "feature/restore",
       worktreePath: input.worktreePath ?? null,
-      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+      lineage: {
+        parentThreadId:
+          input.threadKind !== undefined && input.threadKind !== "remote-delegated"
+            ? ThreadId.make("thread-parent")
+            : null,
+        relationshipToParent:
+          input.threadKind === "delegated" || input.threadKind === "native-subagent"
+            ? "subagent"
+            : input.threadKind === "fork"
+              ? "fork"
+              : null,
+        rootThreadId: threadId,
+      },
+      creationSource: input.threadKind === "native-subagent" ? "provider" : "web",
+      delegatedFrom:
+        input.threadKind === "remote-delegated"
+          ? {
+              environmentId: EnvironmentId.make("environment-parent"),
+              threadId: ThreadId.make("thread-parent"),
+              title: "Parent",
+            }
+          : undefined,
     } as OrchestrationV2ThreadProjection["thread"],
     runs: [
       ...(input.previousNativeSession
@@ -3304,7 +3327,7 @@ effectIt.effect("gives an ordinary parent this project's role catalog with manag
     expect(harness.startTurn).toHaveBeenCalledOnce();
     const text = harness.startTurn.mock.calls[0]?.[0].message.text ?? "";
     expect(text).toContain("## Role delegation");
-    expect(text).toContain("`delegate_task` with `role`");
+    expect(text).toContain("check the configured roles below");
     expect(text).toContain("a native subagent cannot");
     expect(text).toContain("UI, interaction, visual, motion, and design-quality work or audits.");
     expect(text).toContain(
@@ -3319,26 +3342,91 @@ effectIt.effect("gives an ordinary parent this project's role catalog with manag
   }),
 );
 
-effectIt.effect("leaves the role catalog out when no delegable role is configured", () =>
-  Effect.gen(function* () {
-    const harness = makeLocalCommandHarness({
-      text: "Continue",
-      sessionForTurn: true,
-    });
-    harness.startRootRun.mockImplementation((input) =>
-      input.session
-        .startTurn({
-          message: { text: "Continue", attachments: [] },
-        } as never)
-        .pipe(Effect.orDie),
-    );
+effectIt.effect.each([undefined, "fork"] as const)(
+  "leaves an untouched project's listed thread in its ordinary shape: %s",
+  (threadKind) =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({
+        text: "Continue",
+        sessionForTurn: true,
+        ...(threadKind === undefined ? {} : { threadKind }),
+      });
+      harness.startRootRun.mockImplementation((input) =>
+        input.session
+          .startTurn({
+            message: { text: "Continue", attachments: [] },
+          } as never)
+          .pipe(Effect.orDie),
+      );
 
-    yield* harness.start;
+      yield* harness.start;
 
-    const text = harness.startTurn.mock.calls[0]?.[0].message.text ?? "";
-    expect(text).not.toContain("## Role delegation");
-    expect(text).toBe("Continue");
-  }),
+      const text = harness.startTurn.mock.calls[0]?.[0].message.text ?? "";
+      expect(text).not.toContain("## Role delegation");
+      expect(text).toBe("Continue");
+    }),
+);
+
+effectIt.effect.each([undefined, "fork"] as const)(
+  "gives a configured project's listed thread the role catalog: %s",
+  (threadKind) =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({
+        text: "Fix the failing test.",
+        sessionForTurn: true,
+        ...(threadKind === undefined ? {} : { threadKind }),
+        settings: {
+          agentRoleModels: {
+            implementation: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6-sol" },
+          },
+        },
+      });
+      harness.startRootRun.mockImplementation((input) =>
+        input.session
+          .startTurn({
+            message: { text: "Fix the failing test.", attachments: [] },
+          } as never)
+          .pipe(Effect.orDie),
+      );
+
+      yield* harness.start;
+
+      const text = harness.startTurn.mock.calls[0]?.[0].message.text ?? "";
+      expect(text).toContain("## Role delegation");
+      expect(text).toContain("`implementation`: Production code changes, fixes, and refactors.");
+      expect(text).toContain("codex/gpt-6-sol (environment default)");
+      expect(text).toContain("User message:\nFix the failing test.");
+    }),
+);
+
+effectIt.effect.each(["delegated", "remote-delegated", "native-subagent"] as const)(
+  "leaves the role catalog out of a child's prompt: %s",
+  (threadKind) =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({
+        text: "Fix the failing test.",
+        sessionForTurn: true,
+        threadKind,
+        settings: {
+          agentRoleModels: {
+            implementation: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6-sol" },
+          },
+        },
+      });
+      harness.startRootRun.mockImplementation((input) =>
+        input.session
+          .startTurn({
+            message: { text: "Fix the failing test.", attachments: [] },
+          } as never)
+          .pipe(Effect.orDie),
+      );
+
+      yield* harness.start;
+
+      const text = harness.startTurn.mock.calls[0]?.[0].message.text ?? "";
+      expect(text).not.toContain("## Role delegation");
+      expect(text).toBe("Fix the failing test.");
+    }),
 );
 
 effectIt.effect("terminalizes a starting run when its provider session cannot open", () =>

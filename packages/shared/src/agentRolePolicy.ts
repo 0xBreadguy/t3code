@@ -1,14 +1,17 @@
-import type {
-  AgentRole,
-  AgentRoleModelPolicySource,
-  AgentRoleModelSelections,
-  ModelSelection,
-  ProjectId,
-  ServerSettings,
+import {
+  DEFAULT_AGENT_ROLE_DELEGATION_MODE,
+  type AgentRole,
+  type AgentRoleDelegationMode,
+  type AgentRoleDelegationModes,
+  type AgentRoleModelPolicySource,
+  type AgentRoleModelSelections,
+  type ModelSelection,
+  type ProjectId,
+  type ServerSettings,
 } from "@t3tools/contracts";
 
 /** Roles an ordinary parent may route to a managed child. */
-export const DELEGABLE_AGENT_ROLES = [
+const DELEGABLE_AGENT_ROLES = [
   "architecture",
   "implementation",
   "research",
@@ -121,26 +124,69 @@ export function effectiveAgentRoleModels(
 }
 
 /**
- * True when this project has any effective delegable role policy: a configured
- * model or an explicit instruction entry. Built-in instructions alone do not
- * count, so an untouched project keeps its legacy prompt shape.
+ * Project key, then environment key, then `prefer`. An instruction or mode alone
+ * never activates a role; only a configured model does.
  */
-export function hasDelegableAgentRolePolicy(input: {
+export function resolveAgentRoleDelegationMode(input: {
+  readonly settings: Pick<ServerSettings, "agentRoleDelegationModes" | "projectSettingsOverrides">;
+  readonly projectId: ProjectId;
+  readonly role: AgentRole;
+}): AgentRoleDelegationMode {
+  const projectMode =
+    input.settings.projectSettingsOverrides[input.projectId]?.agentRoleDelegationModes?.[
+      input.role
+    ];
+  if (projectMode !== undefined) return projectMode;
+  return input.settings.agentRoleDelegationModes[input.role] ?? DEFAULT_AGENT_ROLE_DELEGATION_MODE;
+}
+
+export function effectiveAgentRoleDelegationModes(
+  settings: Pick<ServerSettings, "agentRoleDelegationModes" | "projectSettingsOverrides">,
+  projectId: ProjectId,
+): AgentRoleDelegationModes {
+  return {
+    ...settings.agentRoleDelegationModes,
+    ...settings.projectSettingsOverrides[projectId]?.agentRoleDelegationModes,
+  };
+}
+
+export interface ActiveAgentRole {
+  readonly role: DelegableAgentRole;
+  readonly modelSelection: ModelSelection;
+  readonly source: AgentRoleModelPolicySource;
+  readonly delegationMode: AgentRoleDelegationMode;
+}
+
+/**
+ * Roles a top-level parent may route to, in catalog order. Only an effective
+ * model makes a role active, so instruction-only and mode-only entries stay
+ * invisible until the user chooses a model.
+ */
+export function activeAgentRoles(input: {
   readonly settings: Pick<
     ServerSettings,
-    "agentRoleModels" | "agentRoleInstructions" | "projectSettingsOverrides"
+    "agentRoleModels" | "agentRoleDelegationModes" | "projectSettingsOverrides"
   >;
   readonly projectId: ProjectId;
-}): boolean {
-  const projectOverrides = input.settings.projectSettingsOverrides[input.projectId];
-  return DELEGABLE_AGENT_ROLES.some(
-    (role) =>
-      resolveAgentRoleModel({
-        settings: input.settings,
-        projectId: input.projectId,
+}): ReadonlyArray<ActiveAgentRole> {
+  return DELEGABLE_AGENT_ROLES.flatMap((role) => {
+    const model = resolveAgentRoleModel({
+      settings: input.settings,
+      projectId: input.projectId,
+      role,
+    });
+    if (model === null) return [];
+    return [
+      {
         role,
-      }) !== null ||
-      projectOverrides?.agentRoleInstructions?.[role] !== undefined ||
-      input.settings.agentRoleInstructions[role] !== undefined,
-  );
+        modelSelection: model.modelSelection,
+        source: model.source,
+        delegationMode: resolveAgentRoleDelegationMode({
+          settings: input.settings,
+          projectId: input.projectId,
+          role,
+        }),
+      },
+    ];
+  });
 }

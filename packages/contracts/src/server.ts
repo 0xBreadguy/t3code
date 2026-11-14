@@ -758,6 +758,8 @@ export const ServerConfig = Schema.Struct({
   managedPolicy: Schema.optionalKey(ManagedPolicySummary),
   /** The built-in role text this server will actually use. Absent means the feature is unsupported. */
   agentRoleInstructionDefaults: Schema.optionalKey(AgentRoleInstructionDefaults),
+  /** Writes to `agentRoleDelegationModes` are understood. Older servers drop the key silently. */
+  supportsAgentRoleDelegationModes: Schema.optionalKey(Schema.Boolean),
   shellResumeCompletionMarker: Schema.optionalKey(Schema.Boolean),
   /**
    * The shell can leave idle subagent children out of snapshots (`omitIdleSubagents`), and

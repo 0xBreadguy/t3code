@@ -75,11 +75,20 @@ See the [glossary](./00_glossary.md) for shared terms and the
 
 ## Role policy delivery
 
-Agent role models and role instructions are per-project environment settings, so a provider system
-prompt built once per adapter cannot carry them.
+Agent role models, instructions, and delegation modes are per-project environment settings, so a
+provider system prompt built once per adapter cannot carry them.
 [ProviderTurnStartService](../../apps/server/src/orchestration-v2/ProviderTurnStartService.ts) folds
-a compact role catalog into each turn's context for every provider: it lists the effective role
-models and their source, and requires T3-managed `delegate_task(role)` to apply them. Only the
-selected child receives the full role instruction. A project with no delegable role policy gets no
-catalog, which preserves native-subagent behavior; an explicit task target still wins.
+a compact role catalog into each top-level turn's context for every provider, but only when a role
+has an effective model. With none configured the prompt is unchanged, so an untouched project keeps
+its previous behavior, including ordinary native-subagent discretion, and gains no T3 routing
+pressure. Each listed role carries its effective model, the model's source, and its delegation mode
+(project over environment, defaulting to `prefer`): `prefer` leaves small, direct work to judgment,
+while `always` routes matching work through the role. Only T3-managed `delegate_task(role)` applies
+them, and only the selected child receives the full role instruction. A delegated child, side chat,
+or native subagent gets no catalog; a child still finishes its own task instead of recursively
+delegating. An explicit task target, direct-work request, or native-tooling request still wins.
+
+Settings writes for a delegation mode are gated on the server advertising
+`supportsAgentRoleDelegationModes`; older servers drop the key, so the client leaves the mode
+unsupported there instead of saving a value the server would discard.
 

@@ -14,6 +14,7 @@ import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as PlatformNodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  AgentRoleDelegationModes,
   AgentRoleInstructions,
   AgentRoleModelSelections,
   ComposerContextRecord,
@@ -370,6 +371,7 @@ export const McpToolUseCase = Schema.Struct({
       Schema.Struct({
         agentRoleModels: Schema.optional(AgentRoleModelSelections),
         agentRoleInstructions: Schema.optional(AgentRoleInstructions),
+        agentRoleDelegationModes: Schema.optional(AgentRoleDelegationModes),
       }),
     ),
     context: Schema.optional(Schema.String),
@@ -1206,13 +1208,17 @@ const loadTools = (tools: Array<ApiTool>, id: string, found: ReadonlyArray<ApiTo
 const EVAL_PROJECT_ID = ProjectId.make("project:acme-eval");
 
 /** T3's per-turn role catalog for a case, built by the production formatter. */
-const roleCatalogForCase = (policy: McpToolUseCase["setup"]["agentRolePolicy"]): string | null =>
-  policy === undefined
-    ? null
-    : formatAgentRoleCatalog({
+const roleCatalogForCase = (
+  policy: McpToolUseCase["setup"]["agentRolePolicy"],
+  topLevel: boolean,
+): string | null =>
+  topLevel
+    ? formatAgentRoleCatalog({
         settings: { ...DEFAULT_SERVER_SETTINGS, ...policy } as ServerSettings,
         projectId: EVAL_PROJECT_ID,
-      });
+        topLevel: true,
+      })
+    : null;
 
 /** Messages for a case: reminders, context, prior turns with real tool blocks, then the prompt. */
 export const buildMessages = (sample: Sample) => {
@@ -1292,7 +1298,10 @@ export const buildMessages = (sample: Sample) => {
   const prompt =
     sideChatContext === undefined ? userText : withInlineContext(sideChatContext, userText);
   const childPrompt = () => taskPrompt({ task: prompt, role: delegateRole });
-  const roleCatalog = roleCatalogForCase(testCase.setup.agentRolePolicy);
+  const roleCatalog = roleCatalogForCase(
+    testCase.setup.agentRolePolicy,
+    role === "top" && sideChat === undefined,
+  );
   const turnPrompt = roleCatalog === null ? prompt : `${roleCatalog}\n\nUser message:\n${prompt}`;
   if (testCase.prompt !== "")
     push("user", text(role === "delegated-child" ? childPrompt() : turnPrompt));
