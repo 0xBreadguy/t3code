@@ -29,7 +29,7 @@ const toggleVariants = cva(
         outline:
           "border-input bg-background not-dark:bg-clip-padding shadow-xs/5 not-disabled:not-active:not-data-pressed:before:shadow-[0_1px_--theme(--color-black/4%)] dark:bg-input/32 dark:data-pressed:bg-input dark:hover:bg-input/64 dark:not-disabled:not-active:not-data-pressed:before:shadow-[0_-1px_--theme(--color-white/6%)] dark:not-disabled:not-data-pressed:before:shadow-[0_-1px_--theme(--color-white/2%)] [:disabled,:active,[data-pressed]]:shadow-none",
         segmented:
-          "border-transparent text-muted-foreground shadow-none transition-colors before:shadow-none hover:bg-background/55 hover:text-foreground data-pressed:bg-background data-pressed:text-foreground data-pressed:shadow-xs/10 dark:hover:bg-input/32 dark:data-pressed:bg-input/72",
+          "border-transparent text-muted-foreground shadow-none transition-colors before:shadow-none hover:bg-background/55 hover:text-foreground data-pressed:bg-background data-pressed:text-foreground data-pressed:shadow-xs/10 dark:hover:bg-input/32 dark:data-pressed:bg-input/72 data-inherited:data-pressed:border-dashed data-inherited:data-pressed:border-muted-foreground/40 data-inherited:data-pressed:bg-transparent data-inherited:data-pressed:text-muted-foreground data-inherited:data-pressed:shadow-none dark:data-inherited:data-pressed:bg-transparent",
       },
     },
   },
@@ -39,12 +39,18 @@ function Toggle({
   className,
   variant,
   size,
+  inherited = false,
   ...props
-}: TogglePrimitive.Props & VariantProps<typeof toggleVariants>) {
+}: TogglePrimitive.Props &
+  VariantProps<typeof toggleVariants> & {
+    /** A value taken from a parent scope, drawn dashed and unfilled while pressed. */
+    inherited?: boolean;
+  }) {
   return (
     <TogglePrimitive
       className={cn(toggleVariants({ className, size, variant }))}
       data-slot="toggle"
+      data-inherited={inherited ? "" : undefined}
       {...props}
     />
   );

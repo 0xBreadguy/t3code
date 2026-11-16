@@ -33,6 +33,8 @@ export interface RoleDelegationModeState {
   readonly resetDisabled: boolean;
   /** The only line the control shows: why it is inert, or that the selection disagrees. */
   readonly note: string | null;
+  /** Neither mode is saved on this project, so the pressed mode is the environment's. */
+  readonly inherited: boolean;
   readonly showReset: boolean;
   readonly resetTooltip: string;
 }
@@ -52,6 +54,7 @@ export function roleDelegationModeState(input: {
       disabledReason: AGENT_ROLE_DELEGATION_MODES_NO_TARGETS_MESSAGE,
       resetDisabled: true,
       note: AGENT_ROLE_DELEGATION_MODES_NO_TARGETS_MESSAGE,
+      inherited: false,
       showReset: false,
       resetTooltip: "Reset to inherited value",
     };
@@ -75,6 +78,10 @@ export function roleDelegationModeState(input: {
       ? null
       : "Choose a model for this role to set how it delegates.";
   const resetDisabled = !input.modesSupported;
+  const inherited =
+    projectScope &&
+    disabledReason === null &&
+    targets.every((target) => target.projectMode === undefined);
   return {
     mixed,
     value: mixed ? null : modes[0]!,
@@ -83,6 +90,7 @@ export function roleDelegationModeState(input: {
     note:
       disabledReason ??
       (mixed ? "Mixed across selected environments. Choosing one sets it for all." : null),
+    inherited,
     showReset,
     resetTooltip,
   };

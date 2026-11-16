@@ -18,11 +18,15 @@ describe("role delegation mode state", () => {
   it("waits for a role model before the mode means anything", () => {
     expect(
       roleDelegationModeState({
-        projectScope: false,
+        projectScope: true,
         modesSupported: true,
         targets: [{ hasModel: false }],
-      }).note,
-    ).toBe("Choose a model for this role to set how it delegates.");
+      }),
+    ).toMatchObject({
+      note: "Choose a model for this role to set how it delegates.",
+      inherited: false,
+      showReset: false,
+    });
   });
 
   it("keeps a server that cannot store modes from accepting the write or its reset", () => {
@@ -36,6 +40,7 @@ describe("role delegation mode state", () => {
       disabledReason: AGENT_ROLE_DELEGATION_MODES_UNSUPPORTED_MESSAGE,
       note: AGENT_ROLE_DELEGATION_MODES_UNSUPPORTED_MESSAGE,
       resetDisabled: true,
+      inherited: false,
       showReset: true,
     });
   });
@@ -48,6 +53,7 @@ describe("role delegation mode state", () => {
     });
     expect(state.disabledReason).toBe(AGENT_ROLE_DELEGATION_MODES_NO_TARGETS_MESSAGE);
     expect(state.note).toBe(AGENT_ROLE_DELEGATION_MODES_NO_TARGETS_MESSAGE);
+    expect(state.inherited).toBe(false);
     expect(state.showReset).toBe(false);
   });
 
@@ -62,6 +68,7 @@ describe("role delegation mode state", () => {
       value: "always",
       disabledReason: "Choose a model for this role to set how it delegates.",
       resetDisabled: false,
+      inherited: false,
       showReset: true,
       resetTooltip: "Reset to inherited value (Prefer)",
     });
@@ -77,6 +84,7 @@ describe("role delegation mode state", () => {
     ).toMatchObject({
       value: "always",
       note: null,
+      inherited: false,
       showReset: false,
     });
   });
@@ -91,6 +99,7 @@ describe("role delegation mode state", () => {
       value: "always",
       mixed: false,
       note: null,
+      inherited: true,
       showReset: false,
       resetTooltip: "Reset to inherited value (Always)",
     });
@@ -103,6 +112,7 @@ describe("role delegation mode state", () => {
     ).toMatchObject({
       value: "prefer",
       note: null,
+      inherited: false,
       showReset: true,
       resetTooltip: "Reset to inherited value (Always)",
     });
@@ -115,8 +125,23 @@ describe("role delegation mode state", () => {
     ).toMatchObject({
       value: "prefer",
       note: null,
+      inherited: true,
       showReset: false,
       resetTooltip: "Reset to inherited value (Prefer)",
+    });
+    expect(
+      roleDelegationModeState({
+        projectScope: true,
+        modesSupported: true,
+        targets: [{ ...laptop, environmentMode: "always", projectMode: "always" }],
+      }),
+    ).toMatchObject({
+      value: "always",
+      mixed: false,
+      note: null,
+      inherited: false,
+      showReset: true,
+      resetTooltip: "Reset to inherited value (Always)",
     });
   });
 
@@ -131,6 +156,7 @@ describe("role delegation mode state", () => {
       mixed: true,
       value: null,
       note: "Mixed across selected environments. Choosing one sets it for all.",
+      inherited: false,
     });
   });
 

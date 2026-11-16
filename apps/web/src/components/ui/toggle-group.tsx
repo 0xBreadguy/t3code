@@ -55,7 +55,10 @@ function Toggle({
   variant,
   size,
   ...props
-}: TogglePrimitive.Props & VariantProps<typeof toggleVariants>) {
+}: TogglePrimitive.Props &
+  VariantProps<typeof toggleVariants> & {
+    inherited?: boolean;
+  }) {
   const context = React.use(ToggleGroupContext);
 
   const resolvedVariant = variant ?? context.variant;
