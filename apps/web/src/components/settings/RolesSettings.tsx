@@ -19,7 +19,6 @@ import { useEnvironmentProviders, useEnvironments } from "../../state/environmen
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
-import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { RoleInstructionsEditor } from "./RoleInstructionsEditor";
@@ -129,20 +128,17 @@ function RoleDelegationControl({
           ))}
         </ToggleGroup>
         {state.showReset ? (
-          <Button
-            size="sm"
-            variant="ghost"
+          <SettingResetButton
+            label={`${title.toLowerCase()} delegation`}
+            tooltip={state.resetTooltip}
             disabled={state.resetDisabled}
-            aria-label={`${state.resetLabel} for ${title} delegation`}
             onClick={onReset}
-          >
-            {state.resetLabel}
-          </Button>
+          />
         ) : null}
       </div>
-      <p className="min-w-0 text-xs text-muted-foreground">
-        {state.disabledReason ?? state.statusLine}
-      </p>
+      {state.note === null ? null : (
+        <p className="min-w-0 text-xs text-muted-foreground">{state.note}</p>
+      )}
     </div>
   );
 }
@@ -153,7 +149,6 @@ function RoleRow({
   description,
   selection,
   mixed,
-  sourceLabel,
   showReset,
   settings,
   providers,
@@ -175,7 +170,6 @@ function RoleRow({
   readonly description: string;
   readonly selection: ModelSelection | null;
   readonly mixed: boolean;
-  readonly sourceLabel: string;
   readonly showReset: boolean;
   readonly settings: UnifiedSettings;
   readonly providers: ReadonlyArray<ServerProvider>;
@@ -214,9 +208,9 @@ function RoleRow({
       ? null
       : modelAvailability(selection, entries, modelOptions, environmentLabel);
   const status =
-    unavailableReason !== null
-      ? `${unavailableReason} Choose another model, or connect the provider.`
-      : sourceLabel;
+    unavailableReason === null
+      ? undefined
+      : `${unavailableReason} Choose another model, or connect the provider.`;
   const triggerLabel = mixed
     ? "Mixed"
     : selection === null
@@ -373,7 +367,6 @@ export function RolesSettings() {
           selections.length > 1 &&
           selections.some((selection) => !Equal.equals(selection, selections[0]));
         const selection = target ? effectiveRole(target, environmentSettingsById, row.role) : null;
-        const override = target ? projectRole(target, row.role) : undefined;
         const showReset = isProjectScope
           ? targets.some((candidate) => projectRole(candidate, row.role) !== undefined)
           : targets.some(
@@ -381,22 +374,6 @@ export function RolesSettings() {
                 environmentRole(environmentSettingsById, candidate.environmentId, row.role) !==
                 undefined,
             );
-        const representativeTarget = target ?? targets[0] ?? null;
-        const resolved =
-          representativeTarget === null
-            ? null
-            : effectiveRole(representativeTarget, environmentSettingsById, row.role);
-        const sourceLabel = mixed
-          ? "Model mixed across selected environments"
-          : isProjectScope && override !== undefined
-            ? "Model set for this project"
-            : resolved !== null
-              ? isProjectScope
-                ? `Model inherited from ${environmentLabel}`
-                : targets.length > 1
-                  ? "Model set on selected environments"
-                  : `Model set on ${environmentLabel}`
-              : "No model set · role inactive";
         const instructionTargets = isProjectScope
           ? targets.flatMap((candidate) => {
               const builtIn = instructionDefaultsByEnvironment.get(candidate.environmentId)?.[
@@ -443,7 +420,6 @@ export function RolesSettings() {
           projectScope: isProjectScope,
           modesSupported: delegationModesSupported,
           targets: targets.map((candidate) => ({
-            environmentLabel: candidate.label,
             projectMode:
               candidate.projectId === null
                 ? undefined
@@ -463,7 +439,6 @@ export function RolesSettings() {
             description={row.description}
             selection={selection}
             mixed={mixed}
-            sourceLabel={sourceLabel}
             showReset={showReset}
             settings={settings}
             providers={providers}
