@@ -8,11 +8,9 @@ import {
 } from "./roleDelegationModes";
 
 const laptop: RoleDelegationModeTarget = {
-  environmentLabel: "Laptop",
   hasModel: true,
 };
 const server: RoleDelegationModeTarget = {
-  environmentLabel: "Server",
   hasModel: true,
 };
 
@@ -22,21 +20,23 @@ describe("role delegation mode state", () => {
       roleDelegationModeState({
         projectScope: false,
         modesSupported: true,
-        targets: [{ environmentLabel: "Laptop", hasModel: false }],
-      }).disabledReason,
+        targets: [{ hasModel: false }],
+      }).note,
     ).toBe("Choose a model for this role to set how it delegates.");
   });
 
   it("keeps a server that cannot store modes from accepting the write or its reset", () => {
     expect(
       roleDelegationModeState({
-        projectScope: false,
+        projectScope: true,
         modesSupported: false,
-        targets: [laptop],
+        targets: [{ ...laptop, projectMode: "always" }],
       }),
     ).toMatchObject({
       disabledReason: AGENT_ROLE_DELEGATION_MODES_UNSUPPORTED_MESSAGE,
+      note: AGENT_ROLE_DELEGATION_MODES_UNSUPPORTED_MESSAGE,
       resetDisabled: true,
+      showReset: true,
     });
   });
 
@@ -47,33 +47,37 @@ describe("role delegation mode state", () => {
       targets: [],
     });
     expect(state.disabledReason).toBe(AGENT_ROLE_DELEGATION_MODES_NO_TARGETS_MESSAGE);
+    expect(state.note).toBe(AGENT_ROLE_DELEGATION_MODES_NO_TARGETS_MESSAGE);
     expect(state.showReset).toBe(false);
   });
 
-  it("keeps the saved mode resettable after its role model is removed", () => {
+  it("keeps a saved project mode resettable after its role model is removed", () => {
     expect(
       roleDelegationModeState({
-        projectScope: false,
+        projectScope: true,
         modesSupported: true,
-        targets: [{ environmentLabel: "Laptop", hasModel: false, environmentMode: "always" }],
+        targets: [{ hasModel: false, projectMode: "always" }],
       }),
     ).toMatchObject({
       value: "always",
       disabledReason: "Choose a model for this role to set how it delegates.",
       resetDisabled: false,
       showReset: true,
-      resetLabel: "Use default",
+      resetTooltip: "Reset to inherited value (Prefer)",
     });
+  });
+
+  it("never offers a reset outside project scope, even with a saved mode", () => {
     expect(
       roleDelegationModeState({
-        projectScope: true,
+        projectScope: false,
         modesSupported: true,
-        targets: [{ environmentLabel: "Laptop", hasModel: false, projectMode: "always" }],
+        targets: [{ ...laptop, environmentMode: "always" }],
       }),
     ).toMatchObject({
-      resetDisabled: false,
-      showReset: true,
-      resetLabel: "Use inherited",
+      value: "always",
+      note: null,
+      showReset: false,
     });
   });
 
@@ -86,9 +90,9 @@ describe("role delegation mode state", () => {
     expect(inherited).toMatchObject({
       value: "always",
       mixed: false,
-      statusLine: "Inherited from Laptop.",
+      note: null,
       showReset: false,
-      resetLabel: "Use inherited",
+      resetTooltip: "Reset to inherited value (Always)",
     });
     expect(
       roleDelegationModeState({
@@ -98,20 +102,21 @@ describe("role delegation mode state", () => {
       }),
     ).toMatchObject({
       value: "prefer",
-      statusLine: "Set for this project.",
+      note: null,
       showReset: true,
+      resetTooltip: "Reset to inherited value (Always)",
     });
     expect(
       roleDelegationModeState({
-        projectScope: false,
+        projectScope: true,
         modesSupported: true,
         targets: [laptop],
       }),
     ).toMatchObject({
       value: "prefer",
-      statusLine: "Defaults to prefer.",
+      note: null,
       showReset: false,
-      resetLabel: "Use default",
+      resetTooltip: "Reset to inherited value (Prefer)",
     });
   });
 
@@ -125,27 +130,34 @@ describe("role delegation mode state", () => {
     ).toMatchObject({
       mixed: true,
       value: null,
-      statusLine: "Mixed across selected environments. Choosing one sets it for all.",
+      note: "Mixed across selected environments. Choosing one sets it for all.",
     });
   });
 
-  it("reports where a mode is set when several environments share one", () => {
-    const state = roleDelegationModeState({
-      projectScope: false,
-      modesSupported: true,
-      targets: [
-        { ...laptop, environmentMode: "always" },
-        { ...server, environmentMode: "always" },
-      ],
-    });
-    expect(state.statusLine).toBe("Set on the selected environments.");
-    expect(state.showReset).toBe(true);
+  it("names the inherited value a project reset falls back to", () => {
     expect(
       roleDelegationModeState({
-        projectScope: false,
+        projectScope: true,
         modesSupported: true,
-        targets: [{ ...laptop, environmentMode: "prefer" }, server],
-      }).statusLine,
-    ).toBe("Set on some selected environments.");
+        targets: [
+          { ...laptop, environmentMode: "always" },
+          { ...server, environmentMode: "always" },
+        ],
+      }),
+    ).toMatchObject({
+      note: null,
+      showReset: false,
+      resetTooltip: "Reset to inherited value (Always)",
+    });
+    expect(
+      roleDelegationModeState({
+        projectScope: true,
+        modesSupported: true,
+        targets: [
+          { ...laptop, environmentMode: "prefer" },
+          { ...server, environmentMode: "always" },
+        ],
+      }).resetTooltip,
+    ).toBe("Reset to inherited value");
   });
 });

@@ -16,8 +16,6 @@ export const ROLE_DELEGATION_MODE_LABELS: Readonly<Record<AgentRoleDelegationMod
 };
 
 export interface RoleDelegationModeTarget {
-  /** Display label for this target's environment. */
-  readonly environmentLabel: string;
   /** Mode saved for this project, when the scope has one. */
   readonly projectMode?: AgentRoleDelegationMode | undefined;
   /** Mode saved on the environment for this role. */
@@ -33,9 +31,10 @@ export interface RoleDelegationModeState {
   readonly disabledReason: string | null;
   /** A saved mode can be cleared without an active model; only a server that drops the write blocks it. */
   readonly resetDisabled: boolean;
-  readonly statusLine: string;
+  /** The only line the control shows: why it is inert, or that the selection disagrees. */
+  readonly note: string | null;
   readonly showReset: boolean;
-  readonly resetLabel: "Use inherited" | "Use default";
+  readonly resetTooltip: string;
 }
 
 export function roleDelegationModeState(input: {
@@ -45,7 +44,6 @@ export function roleDelegationModeState(input: {
   readonly targets: ReadonlyArray<RoleDelegationModeTarget>;
 }): RoleDelegationModeState {
   const { projectScope, targets } = input;
-  const resetLabel = projectScope ? "Use inherited" : "Use default";
   const first = targets[0];
   if (first === undefined) {
     return {
@@ -53,48 +51,39 @@ export function roleDelegationModeState(input: {
       value: DEFAULT_AGENT_ROLE_DELEGATION_MODE,
       disabledReason: AGENT_ROLE_DELEGATION_MODES_NO_TARGETS_MESSAGE,
       resetDisabled: true,
-      statusLine: `Defaults to ${DEFAULT_AGENT_ROLE_DELEGATION_MODE}.`,
+      note: AGENT_ROLE_DELEGATION_MODES_NO_TARGETS_MESSAGE,
       showReset: false,
-      resetLabel,
+      resetTooltip: "Reset to inherited value",
     };
   }
   const modes = targets.map(
     (target) => target.projectMode ?? target.environmentMode ?? DEFAULT_AGENT_ROLE_DELEGATION_MODE,
   );
   const mixed = modes.length > 1 && modes.some((mode) => !Equal.equals(mode, modes[0]!));
-  const explicit = targets.map((target) =>
-    projectScope ? target.projectMode : target.environmentMode,
+  const inheritedModes = targets.map(
+    (target) => target.environmentMode ?? DEFAULT_AGENT_ROLE_DELEGATION_MODE,
   );
-  const explicitCount = explicit.filter((mode) => mode !== undefined).length;
-  const showReset = explicitCount > 0;
+  const inheritedMode = inheritedModes[0]!;
+  const resetTooltip =
+    inheritedModes.length > 1 && inheritedModes.some((mode) => !Equal.equals(mode, inheritedMode))
+      ? "Reset to inherited value"
+      : `Reset to inherited value (${ROLE_DELEGATION_MODE_LABELS[inheritedMode]})`;
+  const showReset = projectScope && targets.some((target) => target.projectMode !== undefined);
   const disabledReason = !input.modesSupported
     ? AGENT_ROLE_DELEGATION_MODES_UNSUPPORTED_MESSAGE
     : targets.some((target) => target.hasModel)
       ? null
       : "Choose a model for this role to set how it delegates.";
   const resetDisabled = !input.modesSupported;
-  const statusLine = mixed
-    ? "Mixed across selected environments. Choosing one sets it for all."
-    : projectScope
-      ? first.projectMode !== undefined
-        ? "Set for this project."
-        : first.environmentMode !== undefined
-          ? `Inherited from ${first.environmentLabel}.`
-          : `Defaults to ${DEFAULT_AGENT_ROLE_DELEGATION_MODE}.`
-      : first.environmentMode !== undefined && explicitCount === targets.length
-        ? targets.length > 1
-          ? "Set on the selected environments."
-          : `Set on ${first.environmentLabel}.`
-        : explicitCount > 0 && targets.length > 1
-          ? "Set on some selected environments."
-          : `Defaults to ${DEFAULT_AGENT_ROLE_DELEGATION_MODE}.`;
   return {
     mixed,
     value: mixed ? null : modes[0]!,
     disabledReason,
     resetDisabled,
-    statusLine,
+    note:
+      disabledReason ??
+      (mixed ? "Mixed across selected environments. Choosing one sets it for all." : null),
     showReset,
-    resetLabel,
+    resetTooltip,
   };
 }
