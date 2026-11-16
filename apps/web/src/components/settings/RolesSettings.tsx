@@ -19,6 +19,7 @@ import { useEnvironmentProviders, useEnvironments } from "../../state/environmen
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
+import { getDisplayModelName, type ModelEsque } from "../chat/providerIconUtils";
 import { toastManager } from "../ui/toast";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { RoleInstructionsEditor } from "./RoleInstructionsEditor";
@@ -32,6 +33,7 @@ import { useSettingsScope } from "./SettingsScopeContext";
 import { scopedDelegationModesSupported } from "./scopedSettings";
 import {
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
+  SETTINGS_PICKER_TRIGGER_INHERITED_CLASSNAME,
   SettingResetButton,
   SettingsRow,
   SettingsSection,
@@ -67,6 +69,18 @@ function effectiveRole(
     environmentRole(environmentSettingsById, target.environmentId, role) ??
     null
   );
+}
+
+/** The name the picker would show for `selection`, or null when its options do not list it. */
+function modelLabel(
+  selection: ModelSelection | null,
+  modelOptions: ReadonlyMap<ProviderInstanceId, ReadonlyArray<ModelEsque>>,
+): string | null {
+  if (selection === null) return null;
+  const option = (modelOptions.get(selection.instanceId) ?? []).find(
+    (candidate) => candidate.slug === selection.model,
+  );
+  return option === undefined ? null : getDisplayModelName(option);
 }
 
 function modelAvailability(
@@ -122,7 +136,7 @@ function RoleDelegationControl({
           }}
         >
           {(Object.keys(ROLE_DELEGATION_MODE_LABELS) as AgentRoleDelegationMode[]).map((mode) => (
-            <Toggle key={mode} value={mode}>
+            <Toggle key={mode} value={mode} inherited={state.inherited}>
               {ROLE_DELEGATION_MODE_LABELS[mode]}
             </Toggle>
           ))}
@@ -150,6 +164,8 @@ function RoleRow({
   selection,
   mixed,
   showReset,
+  modelInherited,
+  inheritedModel,
   settings,
   providers,
   entries,
@@ -171,6 +187,10 @@ function RoleRow({
   readonly selection: ModelSelection | null;
   readonly mixed: boolean;
   readonly showReset: boolean;
+  /** The model comes from the environment, so the pickers read as inherited. */
+  readonly modelInherited: boolean;
+  /** What a project reset falls back to; null hides the name from its tooltip. */
+  readonly inheritedModel: ModelSelection | null;
   readonly settings: UnifiedSettings;
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly entries: ReadonlyArray<ProviderInstanceEntry>;
@@ -218,6 +238,15 @@ function RoleRow({
       : unavailableReason !== null
         ? `${selection.model} (Unavailable)`
         : null;
+  const pickerTriggerClassName = modelInherited
+    ? SETTINGS_PICKER_TRIGGER_INHERITED_CLASSNAME
+    : SETTINGS_PICKER_TRIGGER_CLASSNAME;
+  const inheritedModelName = modelLabel(inheritedModel, modelOptions);
+  const resetTooltip = projectScope
+    ? inheritedModelName === null
+      ? "Reset to inherited value"
+      : `Reset to inherited value (${inheritedModelName})`
+    : "Reset model";
 
   return (
     <SettingsRow
@@ -233,7 +262,7 @@ function RoleRow({
         showReset ? (
           <SettingResetButton
             label={`${title.toLowerCase()} model`}
-            tooltip="Reset model"
+            tooltip={resetTooltip}
             onClick={onReset}
           />
         ) : null
@@ -250,7 +279,7 @@ function RoleRow({
               lockedProvider={null}
               instanceEntries={entries}
               modelOptionsByInstance={modelOptions}
-              triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+              triggerClassName={pickerTriggerClassName}
               triggerAriaLabel={`${title} model`}
               {...(triggerLabel === null ? {} : { triggerLabel })}
               getModelDisabledReason={modelDisabledReason}
@@ -282,7 +311,7 @@ function RoleRow({
                 modelOptions={selection.options ?? []}
                 allowPromptInjectedEffort={false}
                 includePlanAgent={selectsPlanAgent(selection.options)}
-                triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                triggerClassName={pickerTriggerClassName}
                 onModelOptionsChange={(options) =>
                   onChange(createModelSelection(selection.instanceId, selection.model, options))
                 }
@@ -367,6 +396,19 @@ export function RolesSettings() {
           selections.length > 1 &&
           selections.some((selection) => !Equal.equals(selection, selections[0]));
         const selection = target ? effectiveRole(target, environmentSettingsById, row.role) : null;
+        const inheritedSelections = targets.map((candidate) =>
+          environmentRole(environmentSettingsById, candidate.environmentId, row.role),
+        );
+        const inheritedModel =
+          inheritedSelections.length > 0 &&
+          inheritedSelections.every((candidate) => Equal.equals(candidate, inheritedSelections[0]))
+            ? (inheritedSelections[0] ?? null)
+            : null;
+        const modelInherited =
+          isProjectScope &&
+          selection !== null &&
+          !mixed &&
+          targets.every((candidate) => projectRole(candidate, row.role) === undefined);
         const showReset = isProjectScope
           ? targets.some((candidate) => projectRole(candidate, row.role) !== undefined)
           : targets.some(
@@ -440,6 +482,8 @@ export function RolesSettings() {
             selection={selection}
             mixed={mixed}
             showReset={showReset}
+            modelInherited={modelInherited}
+            inheritedModel={inheritedModel}
             settings={settings}
             providers={providers}
             entries={entries}

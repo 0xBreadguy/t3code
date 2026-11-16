@@ -53,6 +53,9 @@ does not override keeps inheriting. In an all-environments scope, a save writes
 the same roles to every selected environment; it does not link them, and a later
 change on one environment stays there.
 
+On a project, a value it inherits has a dashed outline; a value set on the
+project is solid and has a reset icon that makes it inherit again.
+
 ## Instructions
 
 Instructions are stored exactly as typed, including leading, trailing, and blank
