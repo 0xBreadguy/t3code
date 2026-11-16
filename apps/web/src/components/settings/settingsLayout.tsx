@@ -189,6 +189,10 @@ export function SettingsSearchTarget({
 export const SETTINGS_PICKER_TRIGGER_CLASSNAME =
   "min-w-0 max-w-none shrink-0 border-input bg-background font-normal text-foreground shadow-xs/5 hover:bg-accent/50 dark:bg-input/32 [&_svg[data-composer-control-chevron]]:stroke-[1.75] [&_svg[data-composer-control-chevron]]:opacity-70";
 
+// Inherited from the environment: dashed and unfilled, like a value that is not this scope's own.
+export const SETTINGS_PICKER_TRIGGER_INHERITED_CLASSNAME =
+  "min-w-0 max-w-none shrink-0 border-dashed border-muted-foreground/40 bg-transparent font-normal text-muted-foreground shadow-none hover:bg-accent/50 dark:bg-transparent [&_svg[data-composer-control-chevron]]:stroke-[1.75] [&_svg[data-composer-control-chevron]]:opacity-70";
+
 export function PolicyTooltip({ children }: { readonly children: string }) {
   const gt = useGT();
   return (
