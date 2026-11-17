@@ -51,7 +51,9 @@ Roles are environment-wide by default. A project can override a role's model,
 mode, or instructions without changing the environment default, and anything it
 does not override keeps inheriting. In an all-environments scope, a save writes
 the same roles to every selected environment; it does not link them, and a later
-change on one environment stays there.
+change on one environment stays there. If a selected environment runs a T3 Code
+version without roles, the section shows an update note instead of the role
+settings.
 
 On a project, a value it inherits has a dashed outline; a value set on the
 project is solid and has a reset icon that makes it inherit again.

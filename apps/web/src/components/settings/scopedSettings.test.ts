@@ -23,6 +23,7 @@ import {
   planScopedSettingsPatch,
   scopedIdleCompaction,
   resolveScopedSettingsTargets,
+  scopedRolesUnsupportedLabels,
   scopedSettingsAreMixed,
   scopedSettingsSource,
   selectScopedSettingsEnvironments,
@@ -165,6 +166,41 @@ describe("scoped settings targets", () => {
     expect(scopedSettingsSource([targets[0]!], ["defaultAutoPull"])).toBe("project");
     expect(scopedSettingsSource(targets, ["enableProviderUpdateChecks"])).toBe("environment");
     expect(scopedSettingsAreMixed(targets, ["defaultAutoPull"])).toBe(true);
+  });
+});
+
+describe("role support across selected targets", () => {
+  function unsupportedLabels(selected: ReadonlyArray<ReturnType<typeof environment>>) {
+    return scopedRolesUnsupportedLabels(
+      resolveScopedSettingsTargets(resolveSettingsScope({}, [], selected), selected),
+      selected,
+    );
+  }
+
+  it("supports roles on servers that advertise them, with or without the security role", () => {
+    const roles = environment("Modern", {
+      agentRoleInstructionDefaults: agentRoleDefaults("Security text."),
+    });
+    const eightRole = environment("Earlier", {
+      agentRoleInstructionDefaults: agentRoleDefaults(),
+    });
+    expect(unsupportedLabels([roles])).toEqual([]);
+    expect(unsupportedLabels([eightRole])).toEqual([]);
+  });
+
+  it("names an environment whose loaded server config has no role settings", () => {
+    expect(unsupportedLabels([environment("Older")])).toEqual(["Older"]);
+  });
+
+  it("names only the older environment in a mixed scope", () => {
+    const roles = environment("Modern", {
+      agentRoleInstructionDefaults: agentRoleDefaults("Security text."),
+    });
+    expect(unsupportedLabels([roles, environment("Older")])).toEqual(["Older"]);
+  });
+
+  it("does not name an environment whose server config has not loaded", () => {
+    expect(unsupportedLabels([environment("Connecting", { loaded: false })])).toEqual([]);
   });
 });
 
