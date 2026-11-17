@@ -3,7 +3,6 @@ import * as Equal from "effect/Equal";
 export interface RoleInstructionTarget {
   /** Stable identity; labels are display text and can collide or change. */
   readonly environmentId: string;
-  readonly environmentLabel: string;
   readonly projectId: string | null;
   readonly builtIn: string;
   readonly projectText: string | undefined;
@@ -18,8 +17,10 @@ export interface RoleInstructionState {
   readonly resolvedText: string;
   readonly summary: RoleInstructionSummary;
   readonly statusLine: string;
-  readonly resetLabel: "Use built-in" | "Use inherited";
+  /** Nothing is saved on this project, so the editor reads as the environment's text. */
+  readonly inherited: boolean;
   readonly showReset: boolean;
+  readonly resetTooltip: string;
   /** Present only when one patch restores every target's exact prior override. */
   readonly undoText: string | undefined;
   readonly canStartFromBuiltIn: boolean;
@@ -38,12 +39,18 @@ function effectiveText(target: RoleInstructionTarget, projectScope: boolean): st
   return explicitText(target, projectScope) ?? inheritedText(target);
 }
 
+/** What the environment gives a project: its own text, or the built-in when it has none. */
+function inheritedSummary(target: RoleInstructionTarget): RoleInstructionSummary {
+  const text = inheritedText(target);
+  if (text === target.builtIn) return "built-in";
+  return text === "" ? "none" : "custom";
+}
+
 function roleInstructionSummary(input: {
   readonly projectScope: boolean;
   readonly mixed: boolean;
   readonly dirty: boolean;
   readonly targets: ReadonlyArray<RoleInstructionTarget>;
-  readonly environmentLabel: string;
 }): { readonly summary: RoleInstructionSummary; readonly statusLine: string } {
   if (input.dirty) {
     return { summary: "unsaved", statusLine: "Unsaved changes" };
@@ -56,36 +63,31 @@ function roleInstructionSummary(input: {
   }
   const target = input.targets[0];
   if (target === undefined) {
-    return { summary: "built-in", statusLine: "T3's built-in instructions." };
+    return { summary: "built-in", statusLine: "" };
   }
-  if (input.projectScope) {
-    if (target.projectText !== undefined) {
-      return target.projectText === ""
-        ? { summary: "none", statusLine: "No extra instructions for this project." }
-        : { summary: "custom", statusLine: "Set for this project." };
-    }
-    return {
-      summary:
-        effectiveText(target, true) === target.builtIn
-          ? "built-in"
-          : effectiveText(target, true) === ""
-            ? "none"
-            : "custom",
-      statusLine: `Inherited from ${target.environmentLabel}. Saving creates a project override.`,
-    };
-  }
-  const environment =
-    input.targets.length > 1 ? "the selected environments" : input.environmentLabel;
-  if (target.environmentText === undefined) {
-    return {
-      summary: "built-in",
-      statusLine: `T3's built-in instructions. Edits are saved as your copy on ${environment}.`,
-    };
-  }
-  if (target.environmentText === "") {
-    return { summary: "none", statusLine: `No extra instructions on ${environment}.` };
-  }
-  return { summary: "custom", statusLine: `Your instructions on ${environment}.` };
+  const own = explicitText(target, input.projectScope);
+  return {
+    summary: own === undefined ? inheritedSummary(target) : own === "" ? "none" : "custom",
+    statusLine: "",
+  };
+}
+
+/** What a project reset falls back to; null when the targets disagree. */
+function inheritedSummaryLabel(targets: ReadonlyArray<RoleInstructionTarget>): string | null {
+  const labels = targets.map((target) => roleInstructionSummaryLabel(inheritedSummary(target)));
+  const first = labels[0];
+  return first === undefined || labels.some((label) => label !== first) ? null : first;
+}
+
+function resetTooltip(
+  projectScope: boolean,
+  targets: ReadonlyArray<RoleInstructionTarget>,
+): string {
+  if (!projectScope) return "Reset to built-in";
+  const inherited = inheritedSummaryLabel(targets);
+  return inherited === null
+    ? "Reset to inherited value"
+    : `Reset to inherited value (${inherited})`;
 }
 
 export function roleInstructionState(input: {
@@ -93,7 +95,6 @@ export function roleInstructionState(input: {
   readonly targets: ReadonlyArray<RoleInstructionTarget>;
   readonly draft: string;
   readonly edited: boolean;
-  readonly environmentLabel: string;
 }): RoleInstructionState {
   const { targets, projectScope } = input;
   const mixed =
@@ -108,13 +109,7 @@ export function roleInstructionState(input: {
   const first = targets[0];
   const resolvedText = mixed || first === undefined ? "" : effectiveText(first, projectScope);
   const dirty = mixed ? input.edited : input.edited && input.draft !== resolvedText;
-  const { summary, statusLine } = roleInstructionSummary({
-    projectScope,
-    mixed,
-    dirty,
-    targets,
-    environmentLabel: input.environmentLabel,
-  });
+  const { summary, statusLine } = roleInstructionSummary({ projectScope, mixed, dirty, targets });
   const explicit = targets.map((target) => explicitText(target, projectScope));
   const showReset = explicit.some((text) => text !== undefined);
   const prior = explicit[0];
@@ -122,6 +117,12 @@ export function roleInstructionState(input: {
     showReset && prior !== undefined && explicit.every((text) => Equal.equals(text, prior))
       ? prior
       : undefined;
+  const inherited =
+    projectScope &&
+    !mixed &&
+    !dirty &&
+    targets.length > 0 &&
+    targets.every((target) => target.projectText === undefined);
   const builtIns = targets.map((target) => target.builtIn);
   const canStartFromBuiltIn =
     mixed && builtIns.length > 0 && builtIns.every((text) => Equal.equals(text, builtIns[0]));
@@ -130,32 +131,25 @@ export function roleInstructionState(input: {
     resolvedText,
     summary,
     statusLine,
-    resetLabel: projectScope ? "Use inherited" : "Use built-in",
+    inherited,
     showReset,
+    resetTooltip: resetTooltip(projectScope, targets),
     undoText,
     canStartFromBuiltIn,
     builtInText: canStartFromBuiltIn ? (builtIns[0] ?? null) : null,
   };
 }
 
-export function roleInstructionSummaryLabel(
-  summary: RoleInstructionSummary,
-  projectScope: boolean,
-  target: RoleInstructionTarget | undefined,
-): string {
+export function roleInstructionSummaryLabel(summary: RoleInstructionSummary): string {
   switch (summary) {
     case "unsaved":
       return "Unsaved";
     case "mixed":
       return "Mixed";
     case "none":
-      return projectScope
-        ? `None${target?.projectText !== undefined ? " · this project" : " · inherited"}`
-        : "None";
+      return "None";
     case "custom":
-      return projectScope
-        ? `Custom${target?.projectText !== undefined ? " · this project" : " · inherited"}`
-        : "Custom";
+      return "Custom";
     case "built-in":
       return "Built-in";
   }

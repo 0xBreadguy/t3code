@@ -11,6 +11,7 @@ import {
   roleInstructionSummaryLabel,
   type RoleInstructionTarget,
 } from "./roleInstructions";
+import { SettingResetButton } from "./settingsLayout";
 import { useUpdateScopedSettings } from "./useScopedSettings";
 
 const COUNTER_THRESHOLD = AGENT_ROLE_INSTRUCTION_MAX_LENGTH * 0.9;
@@ -20,13 +21,11 @@ export function RoleInstructionsEditor({
   title,
   projectScope,
   targets,
-  environmentLabel,
 }: {
   readonly role: AgentRole;
   readonly title: string;
   readonly projectScope: boolean;
   readonly targets: ReadonlyArray<RoleInstructionTarget>;
-  readonly environmentLabel: string;
 }) {
   const updateSettings = useUpdateScopedSettings();
   const [open, setOpen] = useState(false);
@@ -43,12 +42,11 @@ export function RoleInstructionsEditor({
     targets,
     draft: draft ?? "",
     edited,
-    environmentLabel,
   });
   const value = edited && draft !== null ? draft : state.resolvedText;
   const dirty = edited ? (state.mixed ? true : value !== state.resolvedText) : false;
   const tooLong = value.length > AGENT_ROLE_INSTRUCTION_MAX_LENGTH;
-  const summary = roleInstructionSummaryLabel(state.summary, projectScope, targets[0]);
+  const summary = roleInstructionSummaryLabel(state.summary);
   const showCounter = value.length >= COUNTER_THRESHOLD;
 
   // A save is only complete once the persisted readback matches the draft.
@@ -153,18 +151,28 @@ export function RoleInstructionsEditor({
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
-      <CollapsibleTrigger className="group mt-3 inline-flex min-h-8 items-center gap-1.5 rounded-md text-left text-xs font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
-        <ChevronRightIcon
-          aria-hidden
-          className="size-3.5 shrink-0 transition-transform duration-150 group-data-panel-open:rotate-90 motion-reduce:transition-none"
-        />
-        <span>
-          <span className="sr-only">{title} </span>
-          Instructions
-          <span className="sr-only">, </span>
-        </span>
-        <span className="font-normal text-muted-foreground/80">{summary}</span>
-      </CollapsibleTrigger>
+      <div className="mt-3 flex min-h-8 items-center gap-1.5">
+        <CollapsibleTrigger className="group inline-flex min-h-8 items-center gap-1.5 rounded-md text-left text-xs font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+          <ChevronRightIcon
+            aria-hidden
+            className="size-3.5 shrink-0 transition-transform duration-150 group-data-panel-open:rotate-90 motion-reduce:transition-none"
+          />
+          <span>
+            <span className="sr-only">{title} </span>
+            Instructions
+            <span className="sr-only">, </span>
+          </span>
+          <span className="font-normal text-muted-foreground/80">{summary}</span>
+        </CollapsibleTrigger>
+        {state.showReset ? (
+          <SettingResetButton
+            label={`${title.toLowerCase()} instructions`}
+            tooltip={state.resetTooltip}
+            disabled={saving}
+            onClick={reset}
+          />
+        ) : null}
+      </div>
       <CollapsiblePanel>
         <div className="pb-3">
           <Textarea
@@ -172,6 +180,7 @@ export function RoleInstructionsEditor({
             aria-label={`${title} instructions`}
             aria-describedby={statusId}
             aria-invalid={tooLong}
+            inherited={state.inherited}
             value={value}
             placeholder={
               state.mixed
@@ -210,17 +219,6 @@ export function RoleInstructionsEditor({
               ) : null}
             </div>
             <div className="flex flex-col gap-2 @min-[32rem]/settings-row:flex-row @min-[32rem]/settings-row:items-center">
-              {state.showReset ? (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  aria-label={`${state.resetLabel} ${title} instructions`}
-                  disabled={saving}
-                  onClick={reset}
-                >
-                  {state.resetLabel}
-                </Button>
-              ) : null}
               {state.canStartFromBuiltIn && state.builtInText !== null ? (
                 <Button
                   size="sm"
