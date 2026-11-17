@@ -148,6 +148,22 @@ export function scopedDelegationModesSupported(
   return environments.length > 0 && environments.every(supportsDelegationModes);
 }
 
+/** Labels of selected destinations that predate roles, whose saves they would drop; empty when all of them support roles. */
+export function scopedRolesUnsupportedLabels(
+  targets: readonly Pick<ScopedSettingsTarget, "environmentId" | "label">[],
+  environments: readonly Pick<ScopedSettingsEnvironment, "environmentId" | "serverConfig">[],
+): readonly string[] {
+  const byId = new Map(environments.map((environment) => [environment.environmentId, environment]));
+  const labels = new Set<string>();
+  for (const target of targets) {
+    const config = byId.get(target.environmentId)?.serverConfig;
+    if (config != null && config.agentRoleInstructionDefaults === undefined) {
+      labels.add(target.label);
+    }
+  }
+  return [...labels];
+}
+
 function withoutKey(value: object, key: string): Record<string, unknown> {
   const next = { ...value } as Record<string, unknown>;
   delete next[key];
