@@ -178,3 +178,26 @@ export function codexCardProvider(input: {
     welcomeAgentState(provider, input.settings) === "checking";
   return open ? provider : null;
 }
+
+const ROLES_PREVIEW_STAGE_LABEL = "Roles Preview";
+
+/**
+ * The usage-data line on the welcome page. A Roles Preview desktop build sends nothing unless the
+ * tester opts back in, so its notice must not promise collection; the stage label is how the
+ * client already tells that build apart.
+ */
+export function welcomeTelemetryNotice(input: {
+  readonly stageLabel: string;
+  readonly policyMessage: string | undefined;
+}): { readonly text: string; readonly privacyLead: string } {
+  if (input.policyMessage !== undefined) {
+    return { text: input.policyMessage, privacyLead: "See the" };
+  }
+  if (input.stageLabel.trim() === ROLES_PREVIEW_STAGE_LABEL) {
+    return { text: "This preview build does not send usage data.", privacyLead: "See the" };
+  }
+  return {
+    text: "T3 Code collects anonymous usage data to improve the app.",
+    privacyLead: "To opt out, see the",
+  };
+}

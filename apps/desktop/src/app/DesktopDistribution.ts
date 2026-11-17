@@ -20,6 +20,18 @@ const decodeDesktopAppPackageMetadataSync = Schema.decodeSync(
   Schema.fromJsonString(DesktopAppPackageMetadata),
 );
 
+/**
+ * Roles Preview keeps usage data off unless the tester's own environment sets a value, so an
+ * explicit `T3CODE_TELEMETRY_ENABLED` still opts back in. Normal builds keep the upstream default.
+ */
+export function defaultsTelemetryOff(input: {
+  readonly distribution: DesktopDistribution | null;
+  /** The value the tester's environment supplies, when it supplies one. */
+  readonly userValue: string | null | undefined;
+}): boolean {
+  return input.distribution === ROLES_PREVIEW_DISTRIBUTION && (input.userValue ?? "").trim() === "";
+}
+
 /** Null for a normal build, a missing package.json, or metadata this build cannot decode. */
 export function readDesktopDistribution(input: {
   readonly appRoot: string;

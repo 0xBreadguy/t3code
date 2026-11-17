@@ -14,6 +14,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopDistribution from "../app/DesktopDistribution.ts";
 import * as DesktopManagedPolicy from "../app/DesktopManagedPolicy.ts";
 import * as DesktopBackendConfiguration from "./DesktopBackendConfiguration.ts";
 import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
@@ -65,6 +66,7 @@ function layerEnvironment(
     readonly resourcesPath?: string;
     readonly appVersion?: string;
     readonly processArch?: NodeJS.Architecture;
+    readonly distribution?: DesktopDistribution.DesktopDistribution;
     readonly otlpTracesUrl?: string;
     readonly otlpMetricsUrl?: string;
     readonly otlpLogsUrl?: string;
@@ -80,6 +82,7 @@ function layerEnvironment(
     isPackaged: options?.isPackaged ?? true,
     resourcesPath: options?.resourcesPath ?? "/missing/resources",
     runningUnderArm64Translation: false,
+    distribution: options?.distribution ?? null,
   }).pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -765,6 +768,69 @@ describe("DesktopBackendConfiguration", () => {
         }),
       );
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect(
+    "Roles Preview starts both backends with usage data off unless the tester opts in",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-desktop-backend-config-test-",
+        });
+
+        const start = (options: {
+          readonly distribution?: DesktopDistribution.DesktopDistribution;
+          readonly env: NodeJS.ProcessEnv;
+        }) =>
+          Effect.gen(function* () {
+            const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+            const primary = yield* configuration.resolvePrimary;
+            const wsl = yield* configuration.resolveWsl({ port: 5050, distro: null });
+            return { primary, wsl };
+          }).pipe(
+            Effect.provide(
+              layerBackendConfiguration().pipe(
+                Layer.provideMerge(layerServerExposure),
+                Layer.provideMerge(DesktopAppSettings.layerTest()),
+                Layer.provideMerge(DesktopWslServerTree.layerTest()),
+                Layer.provideMerge(
+                  DesktopWslEnvironment.layerTest({
+                    isAvailable: true,
+                    windowsToWslPath: () => Option.some("/mnt/c/repo/apps/server/src/index.ts"),
+                    getDistroIp: () => Option.some("172.27.0.99"),
+                  }),
+                ),
+                Layer.provideMerge(
+                  layerEnvironment(baseDir, {
+                    platform: "win32",
+                    ...(options.distribution === undefined
+                      ? {}
+                      : { distribution: options.distribution }),
+                  }),
+                ),
+              ),
+            ),
+            Effect.provideService(HostProcess.Environment, options.env),
+          );
+
+        const preview = yield* start({ distribution: "roles-preview", env: {} });
+        assert.equal(preview.primary.env.T3CODE_TELEMETRY_ENABLED, "false");
+        assert.equal(preview.wsl.env.T3CODE_TELEMETRY_ENABLED, "false");
+        assert.include((preview.wsl.env.WSLENV ?? "").split(":"), "T3CODE_TELEMETRY_ENABLED");
+
+        const optedIn = yield* start({
+          distribution: "roles-preview",
+          env: { T3CODE_TELEMETRY_ENABLED: "true" },
+        });
+        // The primary inherits the tester's value through extendEnv; WSL carries it across.
+        assert.notProperty(optedIn.primary.env, "T3CODE_TELEMETRY_ENABLED");
+        assert.equal(optedIn.wsl.env.T3CODE_TELEMETRY_ENABLED, "true");
+
+        const normal = yield* start({ env: {} });
+        assert.notProperty(normal.primary.env, "T3CODE_TELEMETRY_ENABLED");
+        assert.notProperty(normal.wsl.env, "T3CODE_TELEMETRY_ENABLED");
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("resolveWsl preserves existing WSLENV entries when forwarding backend secrets", () =>
