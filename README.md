@@ -1,3 +1,15 @@
+> [!NOTE]
+> **This is an unofficial fork of T3 Code.** It adds one feature, Roles & models, and ships it as a separate preview app you can install next to your normal T3 Code. The T3 Code team didn't build it, so please report problems here and not on upstream.
+>
+> `main` is upstream [`pingdotgg/t3code`](https://github.com/pingdotgg/t3code) at [`9d28fc921b`](https://github.com/pingdotgg/t3code/commit/9d28fc921be19a7314376f6438242dcb838eb221) (November 16, 2026), the commit the preview is built on, plus this note. The Roles code is on the [`roles-preview`](https://github.com/0xBreadguy/t3code/tree/roles-preview) branch.
+>
+> What the preview changes:
+>
+> - **Roles & models** (Settings → Threads → Roles & models). Give roles like implementation, review, security or research their own model, a delegation mode (Prefer or Always) and optional instructions, for the whole machine or per project. Once a role has a model, agents see the roles you set up and hand matching work to that role's model. More in [Roles and models](https://github.com/0xBreadguy/t3code/blob/roles-preview/docs/user/roles.md).
+> - **Its own app.** It installs as "T3 Code Roles Preview" with its own data folder (`~/.t3-roles-preview`), so your real T3 Code threads and settings stay untouched. It doesn't install the `t3` command, doesn't auto-update and doesn't send usage data.
+>
+> Downloads are on [Releases](https://github.com/0xBreadguy/t3code/releases). Bugs and feedback go in [Issues](https://github.com/0xBreadguy/t3code/issues).
+
 <p align="center">
   <a href="https://t3.codes">
     <img src="./assets/prod/t3-black-web-icon-192x192.png" width="80" height="80" alt="T3 Code logo" />
