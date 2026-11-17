@@ -14,12 +14,14 @@ import {
   resolveDesktopStateDir,
   type JoinPath,
 } from "./DesktopStatePaths.ts";
+import { ROLES_PREVIEW_DISTRIBUTION, type DesktopDistribution } from "./DesktopDistribution.ts";
 
 interface EarlyDesktopSettingsInput {
   readonly env: NodeJS.ProcessEnv;
   readonly homeDirectory: string;
   readonly joinPath: JoinPath;
   readonly readFileString: (path: string) => string;
+  readonly distribution?: DesktopDistribution | null;
 }
 
 type EarlyLinuxElectronOptionsInput = EarlyDesktopSettingsInput;
@@ -28,10 +30,18 @@ export interface EarlyLinuxElectronOptions {
   readonly isDevelopment: boolean;
   readonly linuxDesktopEntryName: string;
   readonly passwordStore: LinuxPasswordStoreSwitch | null;
+  readonly distribution: DesktopDistribution | null;
 }
 
-export const resolveLinuxDesktopEntryName = (isDevelopment: boolean): string =>
-  isDevelopment ? "com.t3tools.T3Code.Development.desktop" : "com.t3tools.T3Code.desktop";
+export const resolveLinuxDesktopEntryName = (
+  isDevelopment: boolean,
+  distribution?: DesktopDistribution | null,
+): string =>
+  isDevelopment
+    ? "com.t3tools.T3Code.Development.desktop"
+    : distribution === ROLES_PREVIEW_DISTRIBUTION
+      ? "com.t3tools.T3Code.RolesPreview.desktop"
+      : "com.t3tools.T3Code.desktop";
 
 const trimNonEmpty = (value: string | undefined): string | null => {
   const trimmed = value?.trim();
@@ -52,12 +62,14 @@ function resolveEarlyDesktopSettingsPath(input: {
   readonly env: NodeJS.ProcessEnv;
   readonly homeDirectory: string;
   readonly joinPath: JoinPath;
+  readonly distribution?: DesktopDistribution | null;
 }): string {
   const t3Home = Option.fromUndefinedOr(input.env.T3CODE_HOME);
   const baseDir = resolveDesktopBaseDir({
     homeDirectory: input.homeDirectory,
     joinPath: input.joinPath,
     t3Home,
+    distribution: input.distribution ?? null,
   });
   const stateDir = resolveDesktopStateDir({
     baseDir,
@@ -143,13 +155,15 @@ export function resolveEarlyLinuxElectronOptions(
 ): EarlyLinuxElectronOptions {
   const preference = resolveEarlyLinuxPasswordStorePreference(input);
   const isDevelopment = isDevelopmentEnvironment(input.env);
+  const distribution = input.distribution ?? null;
   return {
     isDevelopment,
-    linuxDesktopEntryName: resolveLinuxDesktopEntryName(isDevelopment),
+    linuxDesktopEntryName: resolveLinuxDesktopEntryName(isDevelopment, distribution),
     passwordStore: resolveLinuxPasswordStoreSwitch({
       preference,
       env: input.env,
     }),
+    distribution,
   };
 }
 

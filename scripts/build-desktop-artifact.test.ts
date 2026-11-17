@@ -44,6 +44,7 @@ import {
   resolveMacPasskeySigningConfiguration,
   resolveMergedStageDependencies,
   resolveBuildOptions,
+  resolveDesktopProductName,
   stageWslRuntimeArchive,
   ancestorNodeModulesPaths,
   copyDirectoryPreservingSymlinks,
@@ -567,6 +568,50 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       );
 
       assert.nestedPropertyVal(linux, "linux.desktop.entry.StartupWMClass", "com.t3tools.T3Code");
+    }),
+  );
+
+  it.effect("keeps a roles-preview build beside a normal T3 Code install", () =>
+    Effect.gen(function* () {
+      const [preview, standard] = yield* Effect.all([
+        createBuildConfig(
+          "linux",
+          "AppImage",
+          "0.1.10-preview.20261116.1",
+          false,
+          false,
+          undefined,
+          undefined,
+          false,
+          "x64",
+          "roles-preview",
+        ),
+        createBuildConfig(
+          "linux",
+          "AppImage",
+          "0.1.10-preview.20261116.1",
+          false,
+          false,
+          undefined,
+          undefined,
+          false,
+          "x64",
+        ),
+      ]);
+
+      assert.equal(preview.appId, "com.t3tools.t3code.rolespreview");
+      assert.equal(preview.productName, "T3 Code Roles Preview");
+      assert.equal(preview.artifactName, "T3-Code-Roles-Preview-${version}-${arch}.${ext}");
+      assert.nestedPropertyVal(preview, "linux.executableName", "t3code-roles-preview");
+      assert.nestedPropertyVal(
+        preview,
+        "linux.desktop.entry.StartupWMClass",
+        "com.t3tools.T3Code.RolesPreview",
+      );
+      assert.nestedPropertyVal(preview, "deb.packageName", "t3code-roles-preview");
+      assert.equal(standard.appId, "com.t3tools.t3code");
+      assert.equal(standard.productName, resolveDesktopProductName("0.1.10-preview.20261116.1"));
+      assert.notEqual(preview.productName, standard.productName);
     }),
   );
 
@@ -1810,6 +1855,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
             platform: Option.some(platform),
             target: Option.none(),
             arch: Option.some("universal"),
+            distribution: Option.none(),
             buildVersion: Option.none(),
             outputDir: Option.none(),
             skipBuild: Option.none(),
@@ -1834,6 +1880,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         platform: Option.some("mac"),
         target: Option.none(),
         arch: Option.some("arm64"),
+        distribution: Option.none(),
         buildVersion: Option.none(),
         outputDir: Option.some("release-test"),
         skipBuild: Option.some(false),

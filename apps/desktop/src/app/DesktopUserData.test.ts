@@ -42,6 +42,33 @@ it.effect.each(["t3code", "T3 Code (Alpha)"])(
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.effect(
+  "gives a roles-preview build its own Electron profile without migrating another install",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-roles-preview-profile-" });
+      yield* fs.makeDirectory(path.join(directory, "t3code-v2"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(directory, "t3code-v2", "Local State"),
+        '{"os_crypt":{"encrypted_key":"stable-install-key"}}',
+      );
+
+      for (const platform of ["win32", "darwin", "linux"] as const) {
+        const userDataPath = yield* resolveUserDataPath({
+          appDataDirectory: directory,
+          isDevelopment: false,
+          platform,
+          distribution: "roles-preview",
+        });
+
+        assert.equal(userDataPath, path.join(directory, "t3code-roles-preview"));
+        assert.isFalse(yield* fs.exists(path.join(userDataPath, "Local State")));
+      }
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 const gpuCacheDirectories = [
   "GPUCache",
   "GrShaderCache",

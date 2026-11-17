@@ -4,6 +4,7 @@ import { assert, describe, it } from "@effect/vitest";
 
 import {
   restoreEarlyLinuxDeviceScaleFactor,
+  resolveEarlyLinuxElectronOptions,
   resolveEarlyLinuxPasswordStorePreference,
   resolveLinuxDisableFeaturesSwitch,
 } from "./DesktopEarlyElectronStartup.ts";
@@ -50,6 +51,23 @@ describe("DesktopEarlyElectronStartup", () => {
     });
 
     assert.equal(preference, "auto");
+  });
+
+  it("reads a roles-preview build's own home and names its desktop entry apart", () => {
+    const paths: string[] = [];
+    const options = resolveEarlyLinuxElectronOptions({
+      env: {},
+      homeDirectory: "/home/user",
+      joinPath,
+      distribution: "roles-preview",
+      readFileString: (path) => {
+        paths.push(path);
+        return "{}";
+      },
+    });
+
+    assert.equal(options.linuxDesktopEntryName, "com.t3tools.T3Code.RolesPreview.desktop");
+    assert.deepStrictEqual(paths, ["/home/user/.t3-roles-preview/userdata/desktop-settings.json"]);
   });
 
   describe("resolveLinuxDisableFeaturesSwitch", () => {
