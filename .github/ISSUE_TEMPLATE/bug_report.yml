@@ -8,8 +8,8 @@ body:
   - type: markdown
     attributes:
       value: |
-        Use this form for broken behavior, regressions, crashes, or reliability problems.
-        Feature requests belong in [Discussions](https://github.com/pingdotgg/t3code/discussions/categories/ideas).
+        Use this form for broken behavior, regressions, crashes, or reliability problems in the Roles Preview.
+        For feedback or ideas about Roles & models, use the Roles feedback form instead.
         Search existing issues first and keep the report focused on one problem.
 
   - type: checkboxes
