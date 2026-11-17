@@ -2902,6 +2902,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         },
       ],
       ...(signed ? { sign: path.join(repoRoot, "scripts/sign-macos.ts") } : {}),
+      // Unsigned bundles read as damaged on Apple silicon; ad-hoc signing lets macOS offer Open Anyway.
+      // Hardened runtime only serves notarization, which ad-hoc builds cannot do, and blocks their library loading.
+      ...(rolesPreview && !signed ? { identity: "-", hardenedRuntime: false } : {}),
       ...(macPasskeySigning
         ? {
             entitlements: macPasskeySigning.entitlementsPath,
