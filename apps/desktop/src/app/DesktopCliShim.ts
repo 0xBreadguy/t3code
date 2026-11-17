@@ -4,6 +4,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Random from "effect/Random";
 
+import * as DesktopDistribution from "./DesktopDistribution.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
 
@@ -147,6 +148,11 @@ export const launcherPath = (environment: DesktopEnvironment.DesktopEnvironment[
 export const install = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   if (!environment.isPackaged) return Option.none<string>();
+  // A preview build must not take over the `t3` command from the normal install beside it.
+  if (environment.distribution === DesktopDistribution.ROLES_PREVIEW_DISTRIBUTION) {
+    yield* logInfo("skipped installing the t3 launcher for a roles-preview build");
+    return Option.none<string>();
+  }
   const fs = yield* FileSystem.FileSystem;
   const path = environment.path;
   const windows = environment.platform === "win32";

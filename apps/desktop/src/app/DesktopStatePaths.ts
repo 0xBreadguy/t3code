@@ -1,6 +1,11 @@
 import * as Option from "effect/Option";
 
+import { ROLES_PREVIEW_DISTRIBUTION, type DesktopDistribution } from "./DesktopDistribution.ts";
+
 export type JoinPath = (first: string, ...segments: string[]) => string;
+
+const DEFAULT_T3_HOME_DIRECTORY = ".t3";
+const ROLES_PREVIEW_T3_HOME_DIRECTORY = ".t3-roles-preview";
 
 function normalizeConfiguredBaseDir(t3Home: Option.Option<string>): Option.Option<string> {
   if (Option.isNone(t3Home)) {
@@ -14,9 +19,15 @@ export function resolveDesktopBaseDir(input: {
   readonly homeDirectory: string;
   readonly joinPath: JoinPath;
   readonly t3Home: Option.Option<string>;
+  readonly distribution?: DesktopDistribution | null;
 }): string {
   return Option.getOrElse(normalizeConfiguredBaseDir(input.t3Home), () =>
-    input.joinPath(input.homeDirectory, ".t3"),
+    input.joinPath(
+      input.homeDirectory,
+      input.distribution === ROLES_PREVIEW_DISTRIBUTION
+        ? ROLES_PREVIEW_T3_HOME_DIRECTORY
+        : DEFAULT_T3_HOME_DIRECTORY,
+    ),
   );
 }
 

@@ -18,6 +18,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { pathSetup, readUserLoginShell } from "@t3tools/shared/shell";
 
 import * as DesktopCliShim from "./DesktopCliShim.ts";
+import * as DesktopDistribution from "./DesktopDistribution.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
 
@@ -235,7 +236,10 @@ export const make = Effect.gen(function* () {
     );
 
   const state: DesktopCliCommand["Service"]["state"] = Effect.gen(function* () {
-    if (!environment.isPackaged) {
+    if (
+      !environment.isPackaged ||
+      environment.distribution === DesktopDistribution.ROLES_PREVIEW_DISTRIBUTION
+    ) {
       return { supported: false, installedPath: null, onPath: false, launcherPath: null } as const;
     }
     const launcherPath = (yield* exists(launcher)) ? launcher : null;
@@ -294,6 +298,9 @@ export const make = Effect.gen(function* () {
 
   const install: DesktopCliCommand["Service"]["install"] = Effect.gen(function* () {
     if (!environment.isPackaged) return yield* fail("The t3 command needs an installed app.");
+    if (environment.distribution === DesktopDistribution.ROLES_PREVIEW_DISTRIBUTION) {
+      return yield* fail("This preview build does not install the t3 command.");
+    }
     yield* ensureLauncher;
     if (windows) {
       // PATH would split the folder at the `;`, leaving two wrong entries behind.

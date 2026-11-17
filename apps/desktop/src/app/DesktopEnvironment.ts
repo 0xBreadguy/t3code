@@ -13,6 +13,7 @@ import * as Path from "effect/Path";
 
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopConfig from "./DesktopConfig.ts";
+import { ROLES_PREVIEW_DISTRIBUTION, type DesktopDistribution } from "./DesktopDistribution.ts";
 import { resolveLinuxDesktopEntryName } from "./DesktopEarlyElectronStartup.ts";
 import { resolveDesktopBaseDir, resolveDesktopStateDir } from "./DesktopStatePaths.ts";
 import { isNightlyDesktopVersion } from "../updates/updateChannels.ts";
@@ -28,6 +29,7 @@ export interface MakeDesktopEnvironmentInput {
   readonly isPackaged: boolean;
   readonly resourcesPath: string;
   readonly runningUnderArm64Translation: boolean;
+  readonly distribution?: DesktopDistribution | null;
 }
 
 export class DesktopEnvironment extends Context.Service<
@@ -73,6 +75,7 @@ export class DesktopEnvironment extends Context.Service<
     readonly otlpHeaders: Option.Option<Record<string, string>>;
     readonly otlpProtocol: OtlpProtocol;
     readonly branding: DesktopAppBranding;
+    readonly distribution: DesktopDistribution | null;
     readonly displayName: string;
     readonly appUserModelId: string;
     readonly linuxDesktopEntryName: string;
@@ -91,7 +94,12 @@ const APP_BASE_NAME = "T3 Code";
 function resolveDesktopAppStageLabel(input: {
   readonly isDevelopment: boolean;
   readonly appVersion: string;
+  readonly distribution?: DesktopDistribution | null;
 }): DesktopAppStageLabel {
+  if (input.distribution === ROLES_PREVIEW_DISTRIBUTION) {
+    return "Roles Preview";
+  }
+
   if (input.isDevelopment) {
     return "Dev";
   }
@@ -102,6 +110,7 @@ function resolveDesktopAppStageLabel(input: {
 export function resolveDesktopAppBranding(input: {
   readonly isDevelopment: boolean;
   readonly appVersion: string;
+  readonly distribution?: DesktopDistribution | null;
 }): DesktopAppBranding {
   const stageLabel = resolveDesktopAppStageLabel(input);
   return {
@@ -161,6 +170,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
     homeDirectory,
     joinPath: path.join,
     t3Home: config.t3Home,
+    distribution: input.distribution ?? null,
   });
   const rootDir = path.resolve(input.dirname, "../../..");
   const appRoot = input.isPackaged ? input.appPath : rootDir;
@@ -171,7 +181,9 @@ const make = Effect.fn("desktop.environment.make")(function* (
   const branding = resolveDesktopAppBranding({
     isDevelopment,
     appVersion: input.appVersion,
+    distribution: input.distribution ?? null,
   });
+  const distribution = input.distribution ?? null;
   const displayName = branding.displayName;
   const stateDir = resolveDesktopStateDir({
     baseDir,
@@ -228,11 +240,16 @@ const make = Effect.fn("desktop.environment.make")(function* (
     otlpHeaders: config.otlpHeaders,
     otlpProtocol: config.otlpProtocol,
     branding,
+    distribution,
     displayName,
     appUserModelId: Option.getOrElse(config.appUserModelIdOverride, () =>
-      isDevelopment ? "com.t3tools.t3code.dev" : "com.t3tools.t3code",
+      distribution === ROLES_PREVIEW_DISTRIBUTION
+        ? "com.t3tools.t3code.rolespreview"
+        : isDevelopment
+          ? "com.t3tools.t3code.dev"
+          : "com.t3tools.t3code",
     ),
-    linuxDesktopEntryName: resolveLinuxDesktopEntryName(isDevelopment),
+    linuxDesktopEntryName: resolveLinuxDesktopEntryName(isDevelopment, distribution),
     linuxApplicationsDir,
     desktopLauncherPath: config.desktopLauncherPath,
     appImagePath: config.appImagePath,
