@@ -625,6 +625,12 @@ export function SettingResetButton({
   );
 }
 
+/** A reset's name says what it resets, built from its tooltip so the two cannot drift. */
+export function settingResetAriaLabel(subject: string, tooltip: string): string {
+  const fallbackTarget = tooltip.startsWith("Reset to ") ? tooltip.slice("Reset to ".length) : null;
+  return fallbackTarget === null ? `Reset ${subject}` : `Reset ${subject} to ${fallbackTarget}`;
+}
+
 export function SettingsPageContainer({
   children,
   className,
