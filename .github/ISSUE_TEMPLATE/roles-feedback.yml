@@ -1,0 +1,55 @@
+name: Roles feedback or idea
+description: Tell us how Roles & models worked for you, or suggest an improvement.
+title: "[Roles]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for trying the Roles Preview. Use this form for how roles behaved, anything confusing, or an idea.
+        For crashes or broken behavior, use the bug report instead.
+
+  - type: input
+    id: version
+    attributes:
+      label: Preview version
+      description: From the release you downloaded.
+      placeholder: 0.1.10-preview.20261117.6
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: How you installed it
+      options:
+        - macOS (Apple silicon)
+        - Linux AppImage
+        - Linux .deb
+    validations:
+      required: true
+
+  - type: textarea
+    id: roles
+    attributes:
+      label: Your roles
+      description: Which roles you set up, with which model and mode (Prefer or Always), for All projects or one project.
+      placeholder: |
+        review: Claude Haiku 5.5, Prefer, All projects
+        security: GPT-6.1 Sol, Always, one project
+
+  - type: textarea
+    id: feedback
+    attributes:
+      label: What happened
+      description: What you asked the agent to do, what it did, and what you expected. Or describe your idea.
+    validations:
+      required: true
+
+  - type: upload
+    id: attachments
+    attributes:
+      label: Screenshots or recordings
+      description: Redact secrets before uploading.
+    validations:
+      required: false
+      accept: ".png,.jpg,.jpeg,.gif,.webp,.mp4,.mov,.webm,.log,.txt"
