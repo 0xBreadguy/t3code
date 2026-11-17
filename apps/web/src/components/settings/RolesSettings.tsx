@@ -30,7 +30,7 @@ import {
   type RoleDelegationModeState,
 } from "./roleDelegationModes";
 import { useSettingsScope } from "./SettingsScopeContext";
-import { scopedDelegationModesSupported } from "./scopedSettings";
+import { scopedDelegationModesSupported, scopedRolesUnsupportedLabels } from "./scopedSettings";
 import {
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
   SETTINGS_PICKER_TRIGGER_INHERITED_CLASSNAME,
@@ -385,6 +385,17 @@ export function RolesSettings() {
         (candidate) =>
           instructionDefaultsByEnvironment.get(candidate.environmentId)?.security !== undefined,
       ));
+
+  const unsupportedRoleLabels = scopedRolesUnsupportedLabels(targets, connectedEnvironments);
+  if (unsupportedRoleLabels.length > 0) {
+    return (
+      <SettingsSection id="roles-models" title="Roles & models">
+        <p className="px-4 py-3 text-sm text-muted-foreground">
+          Update T3 Code on {unsupportedRoleLabels.join(", ")} to set up roles.
+        </p>
+      </SettingsSection>
+    );
+  }
 
   return (
     <SettingsSection id="roles-models" title="Roles & models">
