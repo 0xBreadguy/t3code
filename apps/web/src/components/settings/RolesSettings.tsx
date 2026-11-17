@@ -334,7 +334,6 @@ function RoleRow({
           title={title}
           projectScope={projectScope}
           targets={instructionTargets}
-          environmentLabel={environmentLabel}
         />
       )}
     </SettingsRow>
@@ -426,7 +425,6 @@ export function RolesSettings() {
               return [
                 {
                   environmentId: candidate.environmentId,
-                  environmentLabel: candidate.label,
                   projectId,
                   builtIn,
                   projectText:
@@ -447,7 +445,6 @@ export function RolesSettings() {
               return [
                 {
                   environmentId: candidate.environmentId,
-                  environmentLabel: candidate.label,
                   projectId: null,
                   builtIn,
                   projectText: undefined,
