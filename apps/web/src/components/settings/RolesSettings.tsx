@@ -37,6 +37,7 @@ import {
   SettingResetButton,
   SettingsRow,
   SettingsSection,
+  settingResetAriaLabel,
 } from "./settingsLayout";
 import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
@@ -143,7 +144,7 @@ function RoleDelegationControl({
         </ToggleGroup>
         {state.showReset ? (
           <SettingResetButton
-            label={`${title.toLowerCase()} delegation`}
+            ariaLabel={settingResetAriaLabel(`${title} delegation`, state.resetTooltip)}
             tooltip={state.resetTooltip}
             disabled={state.resetDisabled}
             onClick={onReset}
@@ -261,7 +262,7 @@ function RoleRow({
       resetAction={
         showReset ? (
           <SettingResetButton
-            label={`${title.toLowerCase()} model`}
+            ariaLabel={settingResetAriaLabel(`${title} model`, resetTooltip)}
             tooltip={resetTooltip}
             onClick={onReset}
           />

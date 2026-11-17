@@ -568,11 +568,15 @@ export function SettingsRow({
 export function SettingResetButton({
   label,
   tooltip = "Reset to default",
+  ariaLabel,
   disabled = false,
   onClick,
 }: {
-  label: string;
+  /** What this resets; the accessible name defaults to `Reset <label> to default`. */
+  label?: string;
   tooltip?: string;
+  /** The accessible name, for a reset whose tooltip names what it falls back to. */
+  ariaLabel?: string;
   disabled?: boolean;
   onClick: () => void;
 }) {
@@ -583,7 +587,7 @@ export function SettingResetButton({
           <Button
             size="icon-micro"
             variant="ghost-muted"
-            aria-label={`Reset ${label} to default`}
+            aria-label={ariaLabel ?? `Reset ${label ?? "setting"} to default`}
             disabled={disabled}
             onClick={(event) => {
               event.stopPropagation();
@@ -597,6 +601,12 @@ export function SettingResetButton({
       <TooltipPopup side="top">{tooltip}</TooltipPopup>
     </Tooltip>
   );
+}
+
+/** A reset's name says what it resets, built from its tooltip so the two cannot drift. */
+export function settingResetAriaLabel(subject: string, tooltip: string): string {
+  const fallbackTarget = tooltip.startsWith("Reset to ") ? tooltip.slice("Reset to ".length) : null;
+  return fallbackTarget === null ? `Reset ${subject}` : `Reset ${subject} to ${fallbackTarget}`;
 }
 
 export function SettingsPageContainer({
