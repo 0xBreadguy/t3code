@@ -26,6 +26,7 @@ import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import * as DesktopDistribution from "../app/DesktopDistribution.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 
 type EnvironmentPatch = Record<string, string>;
@@ -718,13 +719,20 @@ export const make = Effect.gen(function* () {
     patch: ShellEnvironmentPatch,
     discovered = false,
   ) {
-    applyShellEnvironment(env, patch, environment.platform);
+    // A null here would clear the default a Roles Preview backend was started with.
+    const resolvedPatch = DesktopDistribution.defaultsTelemetryOff({
+      distribution: environment.distribution,
+      userValue: patch.T3CODE_TELEMETRY_ENABLED,
+    })
+      ? { ...patch, T3CODE_TELEMETRY_ENABLED: "false" }
+      : patch;
+    applyShellEnvironment(env, resolvedPatch, environment.platform);
     const message: DesktopShellEnvironmentSnapshot = {
       version: 1,
       type: "shellEnvironment",
       discovered,
       platform: environment.platform,
-      environment: patch,
+      environment: resolvedPatch,
     };
     yield* Ref.set(latest, Option.some(message));
     yield* PubSub.publish(changes, message);

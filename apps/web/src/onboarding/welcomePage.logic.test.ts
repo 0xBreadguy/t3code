@@ -16,6 +16,7 @@ import {
   groupWelcomeAgents,
   turnedOnInstance,
   welcomeOffersPhone,
+  welcomeTelemetryNotice,
 } from "./welcomePage.logic";
 
 function provider(name: string, overrides: Partial<ServerProvider> = {}): ServerProvider {
@@ -261,5 +262,26 @@ describe("welcomeOffersPhone", () => {
     expect(offers({ policy: policy({ connect: false }) })).toBe(false);
     expect(offers({ policy: policy({ clients: ["desktop"] }) })).toBe(false);
     expect(offers({ isPrimary: false })).toBe(false);
+  });
+});
+
+describe("welcomeTelemetryNotice", () => {
+  it("does not promise collection on a Roles Preview build, and still names the policy", () => {
+    const notice = (input: Parameters<typeof welcomeTelemetryNotice>[0]) =>
+      welcomeTelemetryNotice(input);
+
+    // A managed policy still speaks for the organization.
+    expect(notice({ stageLabel: "Roles Preview", policyMessage: "Acme turned it off." })).toEqual({
+      text: "Acme turned it off.",
+      privacyLead: "See the",
+    });
+    expect(notice({ stageLabel: "Roles Preview", policyMessage: undefined })).toEqual({
+      text: "This preview build does not send usage data.",
+      privacyLead: "See the",
+    });
+    expect(notice({ stageLabel: "Beta", policyMessage: undefined })).toEqual({
+      text: "T3 Code collects anonymous usage data to improve the app.",
+      privacyLead: "To opt out, see the",
+    });
   });
 });

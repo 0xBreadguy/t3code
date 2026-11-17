@@ -20,6 +20,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as NodeOS from "node:os";
 import { vi } from "vite-plus/test";
 
+import * as DesktopDistribution from "../app/DesktopDistribution.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopShellEnvironment from "./DesktopShellEnvironment.ts";
 
@@ -120,6 +121,7 @@ function withProcessEnv<A, E, R>(
 function runShellEnvironment(input: {
   readonly env: NodeJS.ProcessEnv;
   readonly platform: NodeJS.Platform;
+  readonly distribution?: DesktopDistribution.DesktopDistribution;
   readonly userShell?: string;
   readonly stateDir?: string;
   readonly use?: (
@@ -140,6 +142,7 @@ function runShellEnvironment(input: {
         platform: input.platform,
         stateDir,
         homeDirectory: "/test-home",
+        distribution: input.distribution ?? null,
       } as DesktopEnvironment.DesktopEnvironment["Service"]);
     }),
   ).pipe(Layer.provide(NodeServices.layer));
@@ -511,6 +514,44 @@ describe("DesktopShellEnvironment", () => {
         assert.equal(yield* fs.readFileString(cachePath), contents);
       }).pipe(Effect.provide(NodeServices.layer)),
   );
+
+  it.effect("keeps usage data off in a Roles Preview shell patch unless the shell sets it", () => {
+    const telemetryInPatch = (input: {
+      readonly distribution?: DesktopDistribution.DesktopDistribution;
+      readonly shell: Readonly<Record<string, string>>;
+    }) => {
+      let published: string | null = null;
+      return runShellEnvironment({
+        env: { SHELL: "/bin/zsh", PATH: "/usr/bin" },
+        platform: "darwin",
+        ...(input.distribution === undefined ? {} : { distribution: input.distribution }),
+        handler: () => envOutput({ PATH: "/fresh/bin", ...input.shell }),
+        use: (service) =>
+          Effect.gen(function* () {
+            yield* service.awaitDiscovery;
+            const head = yield* Stream.runHead(service.updates);
+            assert.isTrue(Option.isSome(head));
+            if (Option.isSome(head)) {
+              published = head.value.environment.T3CODE_TELEMETRY_ENABLED ?? null;
+            }
+            return true;
+          }),
+      }).pipe(Effect.map(() => published));
+    };
+
+    return Effect.gen(function* () {
+      // The desktop would otherwise clear the backend's default with a null.
+      assert.equal(yield* telemetryInPatch({ distribution: "roles-preview", shell: {} }), "false");
+      assert.equal(
+        yield* telemetryInPatch({
+          distribution: "roles-preview",
+          shell: { T3CODE_TELEMETRY_ENABLED: "true" },
+        }),
+        "true",
+      );
+      assert.isNull(yield* telemetryInPatch({ shell: {} }));
+    }).pipe(Effect.provide(NodeServices.layer));
+  });
 
   it.effect("cancels background discovery when the application scope closes", () =>
     Effect.gen(function* () {
