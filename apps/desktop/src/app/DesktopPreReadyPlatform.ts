@@ -12,6 +12,7 @@ import * as Electron from "electron";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as DesktopEarlyElectronStartup from "./DesktopEarlyElectronStartup.ts";
+import * as DesktopDistribution from "./DesktopDistribution.ts";
 import { trimmedString } from "./DesktopConfig.ts";
 import { resolveDesktopAppBranding } from "./DesktopEnvironment.ts";
 import {
@@ -45,6 +46,10 @@ export const resolveEarlyLinuxElectronOptionsFromProcess = (
     homeDirectory,
     joinPath: NodePath.posix.join,
     readFileString: (path) => NodeFS.readFileSync(path, "utf8"),
+    distribution: DesktopDistribution.readDesktopDistribution({
+      appRoot: Electron.app.getAppPath(),
+      readFileString: (path) => NodeFS.readFileSync(path, "utf8"),
+    }),
   });
 
 export class DesktopPreReadyElectronOptions extends Context.Service<
@@ -145,6 +150,7 @@ export const make = Effect.gen(function* () {
             displayName: resolveDesktopAppBranding({
               isDevelopment: linux.isDevelopment,
               appVersion: Electron.app.getVersion(),
+              distribution: linux.distribution,
             }).displayName,
             execTarget:
               Option.getOrUndefined(

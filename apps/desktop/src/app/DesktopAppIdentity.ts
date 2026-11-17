@@ -5,20 +5,15 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
-import * as Schema from "effect/Schema";
 
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as DesktopAssets from "./DesktopAssets.ts";
+import * as DesktopDistribution from "./DesktopDistribution.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopUserData from "./DesktopUserData.ts";
 
 const COMMIT_HASH_PATTERN = /^[0-9a-f]{7,40}$/i;
 const COMMIT_HASH_DISPLAY_LENGTH = 12;
-
-const AppPackageMetadata = Schema.Struct({
-  t3codeCommitHash: Schema.optional(Schema.String),
-});
-const decodeAppPackageMetadata = Schema.decodeEffect(Schema.fromJsonString(AppPackageMetadata));
 
 export class DesktopAppIdentity extends Context.Service<
   DesktopAppIdentity,
@@ -53,7 +48,7 @@ export const make = Effect.gen(function* () {
     return yield* Option.match(raw, {
       onNone: () => Effect.succeed(Option.none<string>()),
       onSome: (value) =>
-        decodeAppPackageMetadata(value).pipe(
+        DesktopDistribution.decodeDesktopAppPackageMetadata(value).pipe(
           Effect.map((parsed) =>
             Option.fromNullishOr(parsed.t3codeCommitHash).pipe(Option.flatMap(normalizeCommitHash)),
           ),

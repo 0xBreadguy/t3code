@@ -72,4 +72,21 @@ describe("DesktopEnvironment", () => {
       assert.equal(production.stateDir, "/Users/alice/.t3/userdata");
     }),
   );
+
+  it.effect("gives a roles-preview build its own home, label and desktop entry", () =>
+    Effect.gen(function* () {
+      const preview = yield* makeEnvironment({ distribution: "roles-preview", isPackaged: true });
+      const configured = yield* makeEnvironment(
+        { distribution: "roles-preview", isPackaged: true },
+        { T3CODE_HOME: "/Users/alice/.t3-test" },
+      );
+
+      assert.equal(preview.baseDir, "/Users/alice/.t3-roles-preview");
+      assert.equal(preview.stateDir, "/Users/alice/.t3-roles-preview/userdata");
+      assert.equal(preview.displayName, "T3 Code (Roles Preview)");
+      assert.equal(preview.appUserModelId, "com.t3tools.t3code.rolespreview");
+      assert.equal(preview.linuxDesktopEntryName, "com.t3tools.T3Code.RolesPreview.desktop");
+      assert.equal(configured.baseDir, "/Users/alice/.t3-test");
+    }),
+  );
 });
