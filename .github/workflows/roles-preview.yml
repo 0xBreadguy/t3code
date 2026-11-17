@@ -1,7 +1,8 @@
 # Fork-only: builds and tests the Roles Preview on GitHub-hosted runners and
-# uploads the AppImage, .deb and SHA256SUMS.txt as a run artifact. A person makes
-# the draft release from that artifact with their own `gh`, because GITHUB_TOKEN
-# cannot tag a commit that adds a workflow file.
+# uploads the Linux AppImage and .deb, an unsigned macOS arm64 DMG, and their
+# SHA256SUMS.txt as run artifacts. A person makes the draft release from those
+# artifacts with their own `gh`, because GITHUB_TOKEN cannot tag a commit that
+# adds a workflow file.
 name: Roles Preview
 
 on:
@@ -237,13 +238,34 @@ jobs:
           --uncached apps/server/integration/transferBudgetV2.integration.test.ts
           --verify-hits 1 apps/server
 
+  version:
+    name: Resolve version
+    if: github.repository == '0xBreadguy/t3code'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          sparse-checkout: apps/desktop/package.json
+          sparse-checkout-cone-mode: false
+
+      - name: Resolve version
+        id: version
+        run: |
+          set -euo pipefail
+          base="$(node -p "require('./apps/desktop/package.json').version")"
+          base="${base%%-*}"
+          echo "version=${base}-preview.$(date -u +%Y%m%d).${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+
   build:
     name: Build Linux x64
     if: github.repository == '0xBreadguy/t3code'
+    needs: version
     runs-on: ubuntu-24.04
     timeout-minutes: 45
-    outputs:
-      version: ${{ steps.version.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -299,21 +321,13 @@ jobs:
             convert -version
           fi
 
-      - name: Resolve version
-        id: version
-        run: |
-          set -euo pipefail
-          base="$(node -p "require('./apps/desktop/package.json').version")"
-          base="${base%%-*}"
-          echo "version=${base}-preview.$(date -u +%Y%m%d).${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
-
       # Unsigned, with no Clerk or relay configuration, and a `-preview.` version,
       # which the build script packages without an update feed, like a local preview build.
       - name: Build desktop artifact
         run: >-
           node scripts/build-desktop-artifact.ts
           --platform linux --target AppImage --arch x64
-          --build-version "${{ steps.version.outputs.version }}"
+          --build-version "${{ needs.version.outputs.version }}"
           --distribution roles-preview --verbose
           --output-dir "$GITHUB_WORKSPACE/release"
 
@@ -352,6 +366,96 @@ jobs:
           path: |
             release/*.AppImage
             release/*.deb
+            release/SHA256SUMS.txt
+          if-no-files-found: error
+          # Installers are already compressed; deflating them again saves under 0.3%.
+          compression-level: 0
+          retention-days: 30
+
+  build_mac:
+    name: Build macOS arm64
+    if: github.repository == '0xBreadguy/t3code'
+    needs: version
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: ./.github/actions/setup-ci-deps
+
+      # electron's install.js (run by ensure:electron) reads this cache before it
+      # downloads from GitHub. The key changes only with the Electron version.
+      - name: Cache Electron download
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/Library/Caches/electron
+          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('node_modules/.pnpm/electron@*/node_modules/electron/package.json') }}
+
+      - name: Ensure Electron runtime is installed
+        run: vp run --filter @t3tools/desktop ensure:electron
+
+      # The resource monitor is built from source by the desktop build, so the
+      # target's Rust standard library must exist.
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+          targets: aarch64-apple-darwin
+
+      # Unsigned, with no Clerk or relay configuration, and a `-preview.` version,
+      # which the build script packages without an update feed, like a local preview build.
+      - name: Build desktop artifact
+        run: >-
+          node scripts/build-desktop-artifact.ts
+          --platform mac --target dmg --arch arm64
+          --build-version "${{ needs.version.outputs.version }}"
+          --distribution roles-preview --verbose
+          --output-dir "$GITHUB_WORKSPACE/release"
+
+      # A build can package fine and still not open. This launches the app from
+      # the mounted DMG against a seeded T3 home and opens a thread.
+      - name: Launch check
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          mount="$RUNNER_TEMP/desktop-launch-dmg"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$(ls "$GITHUB_WORKSPACE"/release/*.dmg)"
+          trap 'hdiutil detach "$mount" -force >/dev/null || true' EXIT
+          app=$(ls -d "$mount"/*.app)
+          executable=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$app/Contents/Info.plist")
+          node scripts/smoke-desktop-app.ts \
+            --artifacts-dir "$RUNNER_TEMP/desktop-launch-check" \
+            --executable "$app/Contents/MacOS/$executable"
+
+      - name: Upload launch check output
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: desktop-launch-check-roles-preview-mac-arm64
+          path: ${{ runner.temp }}/desktop-launch-check
+          if-no-files-found: ignore
+
+      - name: Write checksums
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/release"
+          shasum -a 256 *.dmg > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: t3-code-roles-preview-mac-arm64
+          path: |
+            release/*.dmg
             release/SHA256SUMS.txt
           if-no-files-found: error
           # Installers are already compressed; deflating them again saves under 0.3%.
