@@ -615,6 +615,43 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }),
   );
 
+  it.effect("ad-hoc signs the unsigned macOS roles-preview build", () =>
+    Effect.gen(function* () {
+      const [preview, standard] = yield* Effect.all([
+        createBuildConfig(
+          "mac",
+          "dmg",
+          "0.0.33",
+          false,
+          false,
+          undefined,
+          undefined,
+          false,
+          "arm64",
+          "roles-preview",
+        ),
+        createBuildConfig(
+          "mac",
+          "dmg",
+          "0.0.33",
+          false,
+          false,
+          undefined,
+          undefined,
+          false,
+          "arm64",
+        ),
+      ]);
+
+      const previewMac = preview.mac as { identity?: string; hardenedRuntime?: boolean };
+      const standardMac = standard.mac as { identity?: string; hardenedRuntime?: boolean };
+      assert.equal(previewMac.identity, "-");
+      assert.equal(previewMac.hardenedRuntime, false);
+      assert.notProperty(standardMac, "identity");
+      assert.notProperty(standardMac, "hardenedRuntime");
+    }),
+  );
+
   it.effect("names updatable AppImages without a version and apart per channel", () =>
     Effect.gen(function* () {
       const appImageName = (version: string) =>
