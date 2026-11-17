@@ -11,7 +11,7 @@ import {
   roleInstructionSummaryLabel,
   type RoleInstructionTarget,
 } from "./roleInstructions";
-import { SettingResetButton } from "./settingsLayout";
+import { SettingResetButton, settingResetAriaLabel } from "./settingsLayout";
 import { useUpdateScopedSettings } from "./useScopedSettings";
 
 const COUNTER_THRESHOLD = AGENT_ROLE_INSTRUCTION_MAX_LENGTH * 0.9;
@@ -166,7 +166,7 @@ export function RoleInstructionsEditor({
         </CollapsibleTrigger>
         {state.showReset ? (
           <SettingResetButton
-            label={`${title.toLowerCase()} instructions`}
+            ariaLabel={settingResetAriaLabel(`${title} instructions`, state.resetTooltip)}
             tooltip={state.resetTooltip}
             disabled={saving}
             onClick={reset}
