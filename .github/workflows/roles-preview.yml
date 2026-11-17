@@ -1,0 +1,397 @@
+# Fork-only: builds and tests the Roles Preview on GitHub-hosted runners.
+# Never publishes; releases are drafts.
+#
+# Upstream's ci.yml and release-desktop.yml run on paid Blacksmith runners that
+# never start on the fork, and only for main, pull requests and v* tags. This
+# mirrors their proven steps on free GitHub-hosted runners instead.
+name: Roles Preview
+
+on:
+  push:
+    branches: [roles-preview]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: roles-preview-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Check
+    if: github.repository == '0xBreadguy/t3code'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: ./.github/actions/setup-ci-deps
+
+      # electron's install.js (run by ensure:electron) reads this cache before it
+      # downloads from GitHub. The key changes only with the Electron version.
+      - name: Cache Electron download
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/electron
+          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('node_modules/.pnpm/electron@*/node_modules/electron/package.json') }}
+
+      - name: Ensure Electron runtime is installed
+        run: vp run --filter @t3tools/desktop ensure:electron
+
+      - name: Check unused code
+        run: vp run knip:check
+
+      - name: Check generated GitHub GraphQL operations
+        run: vp run --filter @t3tools/source-control-github generate --check
+
+      - name: Check generated Expo GraphQL operations
+        run: vp run --filter t3 generate --check
+
+      - name: Check
+        run: vp check
+
+      - name: Typecheck
+        run: vp run typecheck
+
+  test:
+    name: Test
+    if: github.repository == '0xBreadguy/t3code'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
+          sparse-checkout-cone-mode: false
+
+      # The desktop tests compile the browser secret helper. The install runs in
+      # the background while Vite+ installs; the step before the tests waits for it.
+      - name: Start installing browser secret helper build libraries
+        run: |
+          (
+            set +e
+            sudo apt-get update &&
+              sudo apt-get install -y libsecret-1-dev pkg-config
+            echo "$?" > "$RUNNER_TEMP/apt-status"
+          ) > "$RUNNER_TEMP/apt.log" 2>&1 < /dev/null &
+
+      - name: Setup Vite+
+        uses: ./.github/actions/setup-ci-deps
+
+      # electron's install.js (run by ensure:electron) reads this cache before it
+      # downloads from GitHub. The key changes only with the Electron version.
+      - name: Cache Electron download
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/electron
+          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('node_modules/.pnpm/electron@*/node_modules/electron/package.json') }}
+
+      - name: Ensure Electron runtime is installed
+        run: vp run --filter @t3tools/desktop ensure:electron
+
+      - name: Test preview artifact validation
+        run: python3 -B .github/scripts/stage-preview-bundle.test.py
+
+      - name: Test release checks
+        run: node --test .github/scripts/check-nightly-release.test.cjs .github/scripts/vercel-deployment-output.test.cjs .github/scripts/mobile-preview-comment.test.cjs .github/scripts/mobile-ios-preview-record.test.cjs .github/scripts/test-delta.test.cjs
+
+      - name: Finish installing browser secret helper build libraries
+        timeout-minutes: 5
+        run: |
+          until test -s "$RUNNER_TEMP/apt-status"; do sleep 1; done
+          cat "$RUNNER_TEMP/apt.log"
+          exit "$(cat "$RUNNER_TEMP/apt-status")"
+
+      # Everything except `t3` (apps/server) and the web app, which have their
+      # own jobs below. This branch never narrows the package list, so every
+      # package those two jobs do not own always runs here.
+      - name: Test
+        run: |
+          set -o pipefail
+          filters=(--filter '!t3' --filter '!@t3tools/monorepo' --filter '!@t3tools/web')
+          # The runner's trace writer can crash on surrogate pairs in test output.
+          vp run --parallel --concurrency-limit 4 "${filters[@]}" test 2>&1 | python3 -u -c '
+          import sys
+          for line in sys.stdin:
+              sys.stdout.write(line.encode("ascii", "backslashreplace").decode("ascii"))
+          '
+
+  test_web:
+    name: Test Web ${{ matrix.shard }}
+    if: github.repository == '0xBreadguy/t3code'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: ./.github/actions/setup-ci-deps
+
+      # The browser project runs React tests in headless Chromium. Same cache key as
+      # test_server, so both jobs share one downloaded browser.
+      - name: Resolve Playwright version
+        id: playwright_version
+        run: echo "version=$(node -p "require('./apps/web/node_modules/playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Chromium
+        id: chromium_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-shell-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright_version.outputs.version }}
+
+      - name: Install Chromium for web browser tests
+        if: steps.chromium_cache.outputs.cache-hit != 'true'
+        run: node apps/web/node_modules/playwright/cli.js install --only-shell chromium
+
+      - name: Install missing Chromium system dependencies
+        run: |
+          browser=$(find "$HOME/.cache/ms-playwright" -name chrome-headless-shell -type f -print -quit)
+          test -n "$browser"
+          if ldd "$browser" | grep '=> not found'; then
+            node apps/web/node_modules/playwright/cli.js install-deps chromium
+          fi
+
+      - name: Test
+        run: vp run --filter @t3tools/web test --shard ${{ matrix.shard }}/${{ strategy.job-total }}
+
+  test_server:
+    name: Test Server ${{ matrix.shard }}
+    if: github.repository == '0xBreadguy/t3code'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: ./.github/actions/setup-ci-deps
+
+      # No Electron setup here: `t3` (apps/server) has no Electron dependency
+      # and none of its tests touch the runtime.
+      # Cache the pinned browser and skip apt unless shared libraries are missing.
+      - name: Resolve Playwright version
+        id: playwright_version
+        run: echo "version=$(node -p "require('./apps/server/node_modules/playwright-core/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Chromium
+        id: chromium_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-shell-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright_version.outputs.version }}
+
+      - name: Install Chromium for server browser integration tests
+        if: steps.chromium_cache.outputs.cache-hit != 'true'
+        run: node apps/server/node_modules/playwright-core/cli.js install --only-shell chromium
+
+      - name: Install missing Chromium system dependencies
+        run: |
+          browser=$(find "$HOME/.cache/ms-playwright" -name chrome-headless-shell -type f -print -quit)
+          test -n "$browser"
+          if ldd "$browser" | grep '=> not found'; then
+            node apps/server/node_modules/playwright-core/cli.js install-deps chromium
+          fi
+
+      - name: Test
+        env:
+          T3CODE_TRANSFER_BUDGET_REPORT_PATH: ${{ runner.temp }}/t3code-transfer-budget.md
+          T3CODE_TRANSFER_BUDGET_RESULT_PATH: ${{ runner.temp }}/thread-transfer-result.json
+          T3CODE_TRANSFER_BUDGET_SCENARIOS_PATH: ${{ runner.temp }}/thread-transfer-scenarios.json
+        # One process per file spends ~2s starting before its tests run; one file per vCPU overlaps that.
+        run: >-
+          vp run test:cached -- --shard ${{ matrix.shard }}/${{ strategy.job-total }} --concurrency 4
+          --uncached apps/server/integration/transferBudgetV2.integration.test.ts
+          --verify-hits 1 apps/server
+
+  build:
+    name: Build Linux x64
+    if: github.repository == '0xBreadguy/t3code'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: ./.github/actions/setup-ci-deps
+
+      # electron's install.js (run by ensure:electron) reads this cache before it
+      # downloads from GitHub. The key changes only with the Electron version.
+      - name: Cache Electron download
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/electron
+          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('node_modules/.pnpm/electron@*/node_modules/electron/package.json') }}
+
+      - name: Ensure Electron runtime is installed
+        run: vp run --filter @t3tools/desktop ensure:electron
+
+      # Every Linux build makes electron-builder fetch the AppImage runtime, FPM
+      # for the deb, and the 7-Zip that unpacks FPM from GitHub releases. It
+      # checks an archive found here against the SHA-256 pinned in those toolset
+      # files and downloads again on a mismatch, so only raw archives are cached.
+      - name: Cache Linux packaging tool archives
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/electron-builder/appimage@*/appimage-tools-runtime-*.tar.gz
+            ~/.cache/electron-builder/fpm@*/fpm-*.7z
+            ~/.cache/electron-builder/7zip@*/7zip-linux-*.tar.gz
+          key: electron-builder-linux-tools-${{ runner.os }}-x64-${{ hashFiles('node_modules/.pnpm/app-builder-lib@*/node_modules/app-builder-lib/out/toolsets/linux.js', 'node_modules/.pnpm/app-builder-lib@*/node_modules/app-builder-lib/out/toolsets/7zip.js') }}
+
+      # The resource monitor and the Linux capture helpers are built from source
+      # by the desktop build, so the target's Rust standard library must exist.
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Install Linux desktop build libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsecret-1-dev pkg-config libgtk-3-0t64 libnss3 libasound2t64 libgbm1 imagemagick xvfb
+          if command -v magick >/dev/null 2>&1; then
+            magick -version
+          else
+            convert -version
+          fi
+
+      - name: Resolve version
+        id: version
+        run: |
+          set -euo pipefail
+          base="$(node -p "require('./apps/desktop/package.json').version")"
+          base="${base%%-*}"
+          echo "version=${base}-preview.$(date -u +%Y%m%d).${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+
+      # Unsigned, with no Clerk or relay configuration, and a `-preview.` version,
+      # which the build script packages without an update feed, like a local preview build.
+      - name: Build desktop artifact
+        run: >-
+          node scripts/build-desktop-artifact.ts
+          --platform linux --target AppImage --arch x64
+          --build-version "${{ steps.version.outputs.version }}"
+          --distribution roles-preview --verbose
+          --output-dir "$GITHUB_WORKSPACE/release"
+
+      # A build can package fine and still not open. This launches the packaged
+      # AppImage against a seeded T3 home and opens a thread.
+      - name: Launch check
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          appimage=$(ls "$GITHUB_WORKSPACE"/release/*.AppImage)
+          chmod +x "$appimage"
+          (cd "$RUNNER_TEMP" && "$appimage" --appimage-extract >/dev/null)
+          xvfb-run -a node scripts/smoke-desktop-app.ts \
+            --artifacts-dir "$RUNNER_TEMP/desktop-launch-check" \
+            --executable "$RUNNER_TEMP/squashfs-root/t3code-roles-preview"
+
+      - name: Upload launch check output
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: desktop-launch-check-roles-preview-linux-x64
+          path: ${{ runner.temp }}/desktop-launch-check
+          if-no-files-found: ignore
+
+      - name: Write checksums
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/release"
+          sha256sum *.AppImage *.deb > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: t3-code-roles-preview-linux-x64
+          path: |
+            release/*.AppImage
+            release/*.deb
+            release/SHA256SUMS.txt
+          if-no-files-found: error
+          # Installers are already compressed; deflating them again saves under 0.3%.
+          compression-level: 0
+          retention-days: 30
+
+  release:
+    name: Release draft
+    needs: [check, test, test_web, test_server, build]
+    if: github.repository == '0xBreadguy/t3code' && github.ref == 'refs/heads/roles-preview'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: t3-code-roles-preview-linux-x64
+          path: release
+
+      # Always a draft: this workflow never publishes, so a human decides what
+      # the fork hands out.
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          notes="$(printf '%s\n' \
+            "Build commit: \`$GITHUB_SHA\`" \
+            "" \
+            "Workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            "" \
+            "Linux x64 AppImage and .deb. Unsigned. Installs beside T3 Code with its own name and data, does not auto-update, and sends no usage data by default. Verify downloads against SHA256SUMS.txt.")"
+          gh release create "roles-preview-$VERSION" \
+            release/*.AppImage release/*.deb release/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft --prerelease --target "$GITHUB_SHA" \
+            --title "T3 Code Roles Preview $VERSION" \
+            --notes "$notes"
