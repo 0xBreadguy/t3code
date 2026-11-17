@@ -1,9 +1,7 @@
-# Fork-only: builds and tests the Roles Preview on GitHub-hosted runners.
-# Never publishes; releases are drafts.
-#
-# Upstream's ci.yml and release-desktop.yml run on paid Blacksmith runners that
-# never start on the fork, and only for main, pull requests and v* tags. This
-# mirrors their proven steps on free GitHub-hosted runners instead.
+# Fork-only: builds and tests the Roles Preview on GitHub-hosted runners and
+# uploads the AppImage, .deb and SHA256SUMS.txt as a run artifact. A person makes
+# the draft release from that artifact with their own `gh`, because GITHUB_TOKEN
+# cannot tag a commit that adds a workflow file.
 name: Roles Preview
 
 on:
@@ -359,39 +357,3 @@ jobs:
           # Installers are already compressed; deflating them again saves under 0.3%.
           compression-level: 0
           retention-days: 30
-
-  release:
-    name: Release draft
-    needs: [check, test, test_web, test_server, build]
-    if: github.repository == '0xBreadguy/t3code' && github.ref == 'refs/heads/roles-preview'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    permissions:
-      contents: write
-    steps:
-      - name: Download build artifacts
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: t3-code-roles-preview-linux-x64
-          path: release
-
-      # Always a draft: this workflow never publishes, so a human decides what
-      # the fork hands out.
-      - name: Create draft release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.build.outputs.version }}
-        run: |
-          set -euo pipefail
-          notes="$(printf '%s\n' \
-            "Build commit: \`$GITHUB_SHA\`" \
-            "" \
-            "Workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
-            "" \
-            "Linux x64 AppImage and .deb. Unsigned. Installs beside T3 Code with its own name and data, does not auto-update, and sends no usage data by default. Verify downloads against SHA256SUMS.txt.")"
-          gh release create "roles-preview-$VERSION" \
-            release/*.AppImage release/*.deb release/SHA256SUMS.txt \
-            --repo "$GITHUB_REPOSITORY" \
-            --draft --prerelease --target "$GITHUB_SHA" \
-            --title "T3 Code Roles Preview $VERSION" \
-            --notes "$notes"
