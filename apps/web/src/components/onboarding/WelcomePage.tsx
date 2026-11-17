@@ -41,7 +41,7 @@ import { msg, T, useGT, useLocale, useMessages, Var } from "gt-react";
 import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
 
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
-import { MOBILE_APP_URL } from "../../branding";
+import { APP_STAGE_LABEL, MOBILE_APP_URL } from "../../branding";
 import { isElectron } from "../../env";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { usePersistEnvironmentProviderInstanceMutation } from "../../hooks/useSettings";
@@ -75,6 +75,7 @@ import {
   turnedOnInstance,
   welcomeAgentState,
   welcomeOffersPhone,
+  welcomeTelemetryNotice,
 } from "../../onboarding/welcomePage.logic";
 import {
   StoredWelcomeImportSelection,
@@ -346,6 +347,23 @@ export function WelcomePage({
 function TelemetryNotice({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const messages = useMessages();
   const telemetryOff = managedTelemetryOffMessage(useManagedPolicy(environmentId), messages);
+  if (APP_STAGE_LABEL.trim() === "Roles Preview") {
+    const notice = welcomeTelemetryNotice({ stageLabel: APP_STAGE_LABEL, policyMessage: telemetryOff });
+    return (
+      <p className="mt-auto pt-12 text-2xs leading-relaxed text-muted-foreground/70">
+        {notice.text} {notice.privacyLead}{" "}
+        <a
+          className="underline decoration-current/40 underline-offset-2 hover:text-muted-foreground"
+          href={PRIVACY_POLICY_URL}
+          target="_blank"
+          rel="noreferrer noopener"
+        >
+          privacy policy
+        </a>
+        .
+      </p>
+    );
+  }
   return (
     <p className="mt-auto pt-12 text-2xs leading-relaxed text-muted-foreground/70">
       {telemetryOff === undefined ? (
