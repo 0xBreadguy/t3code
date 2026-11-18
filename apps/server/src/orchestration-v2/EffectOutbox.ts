@@ -55,6 +55,10 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     title: Schema.String,
   }),
   Schema.Struct({
+    type: Schema.Literal("workspace.prepare"),
+    runId: RunId,
+  }),
+  Schema.Struct({
     type: Schema.Literal("provider-turn.start"),
     runId: RunId,
   }),
@@ -153,6 +157,7 @@ export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
 ] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
 
 export const PROCESS_BOUND_EFFECT_TYPES = [
+  "workspace.prepare",
   "provider-session.apply-model-selection",
   "provider-session.apply-thread-title",
   "provider-turn.start",

@@ -21,7 +21,7 @@ import { extendConnectionAttemptTimeout, keepOutboundFetchOnHttp1 } from "./outb
 import { sharedServerCommandFlags } from "./cli/config.ts";
 import { projectCommand } from "./cli/project.ts";
 import { threadCommand } from "./cli/thread.ts";
-import { runDefaultServerCommand, serveCommand, startCommand } from "./cli/server.ts";
+import { runDefaultServerCommand, serveCommand, startCommand, trialCommand } from "./cli/server.ts";
 import { updateCommand } from "./cli/update.ts";
 import {
   confirmCliInstall,
@@ -83,6 +83,7 @@ export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
       acpMcpBridgeCommand,
       acpMcpCallCommand,
       startCommand,
+      trialCommand,
       serveCommand,
       appCommand,
       pairCommand,
