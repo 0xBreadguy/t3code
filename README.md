@@ -9,6 +9,8 @@
 > - **Its own app.** It installs as "T3 Code Roles Preview" with its own data folder (`~/.t3-roles-preview`), so your real T3 Code threads and settings stay untouched. It doesn't install the `t3` command, doesn't auto-update and doesn't send usage data.
 >
 > Downloads are on [Releases](https://github.com/0xBreadguy/t3code/releases). Bugs and feedback go in [Issues](https://github.com/0xBreadguy/t3code/issues).
+>
+> Think Roles should be part of T3 Code, or that it shouldn't? Say why in the [Roles discussion](https://github.com/pingdotgg/t3code/discussions/38477) on upstream.
 
 <p align="center">
   <a href="https://t3.codes">

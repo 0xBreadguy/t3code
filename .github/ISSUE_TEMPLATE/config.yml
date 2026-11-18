@@ -1,1 +1,5 @@
 blank_issues_enabled: true
+contact_links:
+  - name: Should Roles be part of T3 Code?
+    url: https://github.com/pingdotgg/t3code/discussions/38477
+    about: Say why or why not in the Roles discussion on upstream. Bugs and feedback on the preview go in an issue here.
