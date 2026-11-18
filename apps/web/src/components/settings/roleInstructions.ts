@@ -1,3 +1,5 @@
+import { msg } from "gt-react";
+import { m, type MessageResolver } from "../../i18n/messages";
 import * as Equal from "effect/Equal";
 
 export interface RoleInstructionTarget {
@@ -46,19 +48,24 @@ function inheritedSummary(target: RoleInstructionTarget): RoleInstructionSummary
   return text === "" ? "none" : "custom";
 }
 
-function roleInstructionSummary(input: {
-  readonly projectScope: boolean;
-  readonly mixed: boolean;
-  readonly dirty: boolean;
-  readonly targets: ReadonlyArray<RoleInstructionTarget>;
-}): { readonly summary: RoleInstructionSummary; readonly statusLine: string } {
+function roleInstructionSummary(
+  input: {
+    readonly projectScope: boolean;
+    readonly mixed: boolean;
+    readonly dirty: boolean;
+    readonly targets: ReadonlyArray<RoleInstructionTarget>;
+  },
+  resolve: MessageResolver,
+): { readonly summary: RoleInstructionSummary; readonly statusLine: string } {
   if (input.dirty) {
-    return { summary: "unsaved", statusLine: "Unsaved changes" };
+    return { summary: "unsaved", statusLine: resolve(msg("Unsaved changes")) };
   }
   if (input.mixed) {
     return {
       summary: "mixed",
-      statusLine: "Different on the selected environments. Saving writes this text to each one.",
+      statusLine: resolve(
+        msg("Different on the selected environments. Saving writes this text to each one."),
+      ),
     };
   }
   const target = input.targets[0];
@@ -73,8 +80,13 @@ function roleInstructionSummary(input: {
 }
 
 /** What a project reset falls back to; null when the targets disagree. */
-function inheritedSummaryLabel(targets: ReadonlyArray<RoleInstructionTarget>): string | null {
-  const labels = targets.map((target) => roleInstructionSummaryLabel(inheritedSummary(target)));
+function inheritedSummaryLabel(
+  targets: ReadonlyArray<RoleInstructionTarget>,
+  resolve: MessageResolver,
+): string | null {
+  const labels = targets.map((target) =>
+    roleInstructionSummaryLabel(inheritedSummary(target), resolve),
+  );
   const first = labels[0];
   return first === undefined || labels.some((label) => label !== first) ? null : first;
 }
@@ -82,20 +94,24 @@ function inheritedSummaryLabel(targets: ReadonlyArray<RoleInstructionTarget>): s
 function resetTooltip(
   projectScope: boolean,
   targets: ReadonlyArray<RoleInstructionTarget>,
+  resolve: MessageResolver,
 ): string {
-  if (!projectScope) return "Reset to built-in";
-  const inherited = inheritedSummaryLabel(targets);
+  if (!projectScope) return resolve(msg("Reset to built-in"));
+  const inherited = inheritedSummaryLabel(targets, resolve);
   return inherited === null
-    ? "Reset to inherited value"
-    : `Reset to inherited value (${inherited})`;
+    ? resolve(msg("Reset to inherited value"))
+    : resolve(msg("Reset to inherited value ({value})", { value: inherited }));
 }
 
-export function roleInstructionState(input: {
-  readonly projectScope: boolean;
-  readonly targets: ReadonlyArray<RoleInstructionTarget>;
-  readonly draft: string;
-  readonly edited: boolean;
-}): RoleInstructionState {
+export function roleInstructionState(
+  input: {
+    readonly projectScope: boolean;
+    readonly targets: ReadonlyArray<RoleInstructionTarget>;
+    readonly draft: string;
+    readonly edited: boolean;
+  },
+  resolve: MessageResolver = m,
+): RoleInstructionState {
   const { targets, projectScope } = input;
   const mixed =
     targets.length > 1 &&
@@ -109,7 +125,10 @@ export function roleInstructionState(input: {
   const first = targets[0];
   const resolvedText = mixed || first === undefined ? "" : effectiveText(first, projectScope);
   const dirty = mixed ? input.edited : input.edited && input.draft !== resolvedText;
-  const { summary, statusLine } = roleInstructionSummary({ projectScope, mixed, dirty, targets });
+  const { summary, statusLine } = roleInstructionSummary(
+    { projectScope, mixed, dirty, targets },
+    resolve,
+  );
   const explicit = targets.map((target) => explicitText(target, projectScope));
   const showReset = explicit.some((text) => text !== undefined);
   const prior = explicit[0];
@@ -133,25 +152,28 @@ export function roleInstructionState(input: {
     statusLine,
     inherited,
     showReset,
-    resetTooltip: resetTooltip(projectScope, targets),
+    resetTooltip: resetTooltip(projectScope, targets, resolve),
     undoText,
     canStartFromBuiltIn,
     builtInText: canStartFromBuiltIn ? (builtIns[0] ?? null) : null,
   };
 }
 
-export function roleInstructionSummaryLabel(summary: RoleInstructionSummary): string {
+export function roleInstructionSummaryLabel(
+  summary: RoleInstructionSummary,
+  resolve: MessageResolver = m,
+): string {
   switch (summary) {
     case "unsaved":
-      return "Unsaved";
+      return resolve(msg("Unsaved"));
     case "mixed":
-      return "Mixed";
+      return resolve(msg("Mixed"));
     case "none":
-      return "None";
+      return resolve(msg("None"));
     case "custom":
-      return "Custom";
+      return resolve(msg("Custom"));
     case "built-in":
-      return "Built-in";
+      return resolve(msg("Built-in"));
   }
 }
 

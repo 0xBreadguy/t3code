@@ -1,3 +1,4 @@
+import { T, useGT, useMessages } from "gt-react";
 import { AGENT_ROLE_INSTRUCTION_MAX_LENGTH, type AgentRole } from "@t3tools/contracts";
 import { ChevronRightIcon } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
@@ -27,6 +28,8 @@ export function RoleInstructionsEditor({
   readonly projectScope: boolean;
   readonly targets: ReadonlyArray<RoleInstructionTarget>;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const updateSettings = useUpdateScopedSettings();
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<string | null>(null);
@@ -37,16 +40,19 @@ export function RoleInstructionsEditor({
   const undoAvailable = useRef(false);
   const editGeneration = useRef(0);
   const statusId = useId();
-  const state = roleInstructionState({
-    projectScope,
-    targets,
-    draft: draft ?? "",
-    edited,
-  });
+  const state = roleInstructionState(
+    {
+      projectScope,
+      targets,
+      draft: draft ?? "",
+      edited,
+    },
+    messages,
+  );
   const value = edited && draft !== null ? draft : state.resolvedText;
   const dirty = edited ? (state.mixed ? true : value !== state.resolvedText) : false;
   const tooLong = value.length > AGENT_ROLE_INSTRUCTION_MAX_LENGTH;
-  const summary = roleInstructionSummaryLabel(state.summary);
+  const summary = roleInstructionSummaryLabel(state.summary, messages);
   const showCounter = value.length >= COUNTER_THRESHOLD;
 
   // A save is only complete once the persisted readback matches the draft.
@@ -86,7 +92,7 @@ export function RoleInstructionsEditor({
       {
         onFailed: () => {
           setSaving(false);
-          setSaveError("Could not save. Your text is still here.");
+          setSaveError(gt("Could not save. Your text is still here."));
         },
       },
     );
@@ -107,7 +113,7 @@ export function RoleInstructionsEditor({
       {
         onFailed: () => {
           setSaving(false);
-          setSaveError("Could not reset these instructions.");
+          setSaveError(gt("Could not reset these instructions."));
         },
         onSaved: () => {
           setSaving(false);
@@ -115,15 +121,15 @@ export function RoleInstructionsEditor({
           undoAvailable.current = previous !== undefined;
           toastManager.add({
             type: "success",
-            title: `${title} instructions reset`,
+            title: gt("{role} instructions reset", { role: title }),
             description: projectScope
-              ? "This project now inherits its instructions again."
-              : "T3's built-in instructions now apply.",
+              ? gt("This project now inherits its instructions again.")
+              : gt("T3's built-in instructions now apply."),
             ...(previous === undefined
               ? {}
               : {
                   actionProps: {
-                    children: "Undo",
+                    children: gt("Undo"),
                     onClick: () => {
                       if (!undoAvailable.current) return;
                       undoAvailable.current = false;
@@ -134,7 +140,7 @@ export function RoleInstructionsEditor({
                         {
                           onFailed: () => {
                             setSaving(false);
-                            setSaveError("Could not restore these instructions.");
+                            setSaveError(gt("Could not restore these instructions."));
                           },
                           onSaved: () => setSaving(false),
                         },
@@ -157,16 +163,19 @@ export function RoleInstructionsEditor({
             aria-hidden
             className="size-3.5 shrink-0 transition-transform duration-150 group-data-panel-open:rotate-90 motion-reduce:transition-none"
           />
-          <span>
-            <span className="sr-only">{title} </span>
-            Instructions
-            <span className="sr-only">, </span>
+          <span className="sr-only">{gt("{role} instructions", { role: title })}, </span>
+          <span aria-hidden>
+            <T>Instructions</T>
           </span>
           <span className="font-normal text-muted-foreground/80">{summary}</span>
         </CollapsibleTrigger>
         {state.showReset ? (
           <SettingResetButton
-            ariaLabel={settingResetAriaLabel(`${title} instructions`, state.resetTooltip)}
+            ariaLabel={settingResetAriaLabel(
+              gt("{role} instructions", { role: title }),
+              state.resetTooltip,
+              messages,
+            )}
             tooltip={state.resetTooltip}
             disabled={saving}
             onClick={reset}
@@ -177,15 +186,15 @@ export function RoleInstructionsEditor({
         <div className="pb-3">
           <Textarea
             ref={textareaRef}
-            aria-label={`${title} instructions`}
+            aria-label={gt("{role} instructions", { role: title })}
             aria-describedby={statusId}
             aria-invalid={tooLong}
             inherited={state.inherited}
             value={value}
             placeholder={
               state.mixed
-                ? "Mixed. Type instructions to save to every selected environment."
-                : "No extra instructions. T3's role framing still applies."
+                ? gt("Mixed. Type instructions to save to every selected environment.")
+                : gt("No extra instructions. T3's role framing still applies.")
             }
             onChange={(event) => change(event.target.value)}
             onKeyDown={(event) => {
@@ -204,17 +213,20 @@ export function RoleInstructionsEditor({
           <div className="flex flex-col gap-2 pt-2.5 @min-[32rem]/settings-row:flex-row @min-[32rem]/settings-row:items-center">
             <div className="min-w-0 flex-1 space-y-1">
               <p id={statusId} role="status" className="text-xs text-muted-foreground">
-                {saveError ?? (dirty ? "Unsaved changes" : state.statusLine)}
+                {saveError ?? (dirty ? gt("Unsaved changes") : state.statusLine)}
               </p>
               {tooLong ? (
                 <p className="text-xs text-destructive">
-                  Instructions must be {AGENT_ROLE_INSTRUCTION_MAX_LENGTH.toLocaleString()}{" "}
-                  characters or fewer.
+                  {gt("Instructions must be {limit} characters or fewer.", {
+                    limit: AGENT_ROLE_INSTRUCTION_MAX_LENGTH.toLocaleString(),
+                  })}
                 </p>
               ) : showCounter ? (
                 <p className="text-xs text-muted-foreground">
-                  {value.length.toLocaleString()} /{" "}
-                  {AGENT_ROLE_INSTRUCTION_MAX_LENGTH.toLocaleString()} characters
+                  {gt("{count} / {limit} characters", {
+                    count: value.length.toLocaleString(),
+                    limit: AGENT_ROLE_INSTRUCTION_MAX_LENGTH.toLocaleString(),
+                  })}
                 </p>
               ) : null}
             </div>
@@ -223,35 +235,35 @@ export function RoleInstructionsEditor({
                 <Button
                   size="sm"
                   variant="ghost"
-                  aria-label={`Start ${title} instructions from built-in text`}
+                  aria-label={gt("Start {role} instructions from built-in text", { role: title })}
                   onClick={() => {
                     change(state.builtInText ?? "");
                     focusTextarea();
                   }}
                 >
-                  Start from built-in
+                  <T>Start from built-in</T>
                 </Button>
               ) : null}
               <div className="grid grid-cols-2 gap-2 @min-[32rem]/settings-row:flex @min-[32rem]/settings-row:items-center">
                 <Button
                   size="sm"
                   variant="ghost"
-                  aria-label={`Cancel ${title} instruction changes`}
+                  aria-label={gt("Cancel {role} instruction changes", { role: title })}
                   disabled={!dirty}
                   onClick={cancel}
                 >
-                  Cancel
+                  <T>Cancel</T>
                 </Button>
                 <Button
                   size="sm"
-                  aria-label={`Save ${title} instructions`}
+                  aria-label={gt("Save {role} instructions", { role: title })}
                   disabled={!dirty || tooLong || saving}
                   onClick={() => {
                     save();
                     focusTextarea();
                   }}
                 >
-                  Save
+                  <T>Save</T>
                 </Button>
               </div>
             </div>

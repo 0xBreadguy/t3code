@@ -1,3 +1,4 @@
+import { m } from "../../i18n/messages";
 import {
   DEFAULT_SERVER_SETTINGS,
   EnvironmentAuthorizationError,
@@ -548,7 +549,7 @@ describe("scoped settings writes", () => {
       planScopedSettingsPatch(resolveSettingsScope({}, [], [legacy]), [legacy], patch),
     ).toMatchObject({
       serverWrites: [],
-      unavailableReason: AGENT_ROLE_DELEGATION_MODES_UNSUPPORTED_MESSAGE,
+      unavailableReason: m(AGENT_ROLE_DELEGATION_MODES_UNSUPPORTED_MESSAGE),
     });
 
     const projectPlan = planScopedSettingsPatch(

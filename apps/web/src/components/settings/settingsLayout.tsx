@@ -1,3 +1,4 @@
+import { m, type MessageResolver } from "../../i18n/messages";
 import { SettingsGroup } from "./SettingsGroup";
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
 import { usePrimaryEnvironmentId, usePrimaryEnvironment } from "../../state/environments";
@@ -10,7 +11,7 @@ import {
   type ServerSettings,
 } from "@t3tools/contracts";
 import * as Equal from "effect/Equal";
-import { useGT } from "gt-react";
+import { msg, useGT } from "gt-react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { createContext, type ComponentPropsWithoutRef, type ReactNode, useContext } from "react";
 
@@ -626,9 +627,12 @@ export function SettingResetButton({
 }
 
 /** A reset's name says what it resets, built from its tooltip so the two cannot drift. */
-export function settingResetAriaLabel(subject: string, tooltip: string): string {
-  const fallbackTarget = tooltip.startsWith("Reset to ") ? tooltip.slice("Reset to ".length) : null;
-  return fallbackTarget === null ? `Reset ${subject}` : `Reset ${subject} to ${fallbackTarget}`;
+export function settingResetAriaLabel(
+  subject: string,
+  tooltip: string,
+  resolve: MessageResolver = m,
+): string {
+  return resolve(msg("{subject}: {action}", { subject, action: tooltip }));
 }
 
 export function SettingsPageContainer({

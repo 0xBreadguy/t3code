@@ -1,3 +1,5 @@
+import { msg } from "gt-react";
+import { m, type MessageResolver } from "../i18n/messages";
 import {
   isProviderAvailable,
   managedCapabilityDenial,
@@ -186,18 +188,24 @@ const ROLES_PREVIEW_STAGE_LABEL = "Roles Preview";
  * tester opts back in, so its notice must not promise collection; the stage label is how the
  * client already tells that build apart.
  */
-export function welcomeTelemetryNotice(input: {
-  readonly stageLabel: string;
-  readonly policyMessage: string | undefined;
-}): { readonly text: string; readonly privacyLead: string } {
+export function welcomeTelemetryNotice(
+  input: {
+    readonly stageLabel: string;
+    readonly policyMessage: string | undefined;
+  },
+  resolve: MessageResolver = m,
+): { readonly text: string; readonly privacyLead: string } {
   if (input.policyMessage !== undefined) {
-    return { text: input.policyMessage, privacyLead: "See the" };
+    return { text: input.policyMessage, privacyLead: resolve(msg("See the")) };
   }
   if (input.stageLabel.trim() === ROLES_PREVIEW_STAGE_LABEL) {
-    return { text: "This preview build does not send usage data.", privacyLead: "See the" };
+    return {
+      text: resolve(msg("This preview build does not send usage data.")),
+      privacyLead: resolve(msg("See the")),
+    };
   }
   return {
-    text: "T3 Code collects anonymous usage data to improve the app.",
-    privacyLead: "To opt out, see the",
+    text: resolve(msg("T3 Code collects anonymous usage data to improve the app.")),
+    privacyLead: resolve(msg("To opt out, see the")),
   };
 }
