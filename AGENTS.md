@@ -75,6 +75,26 @@ The most common defect in this repo is a change that works on the path you teste
 - **Connection modes.** Local, remote/relay, and tunnel behave differently. Multi-device and multi-environment cases are real.
 - **Docs.** Check whether the change makes existing guidance inaccurate. Apply the [documentation rules](#documentation) before adding anything.
 
+## Installing the fork for someone
+
+When installing the fork for a user, check whether the machine that will run it
+already has a T3 V2 setup. The default source is `~/.t3/userdata/statev2.sqlite`.
+Check whether the file exists without opening the database. Use a separate
+install and data directory for the fork.
+
+If you find an existing setup, ask the user to choose **Start fresh** or **Copy
+existing T3 setup** before the first launch. Explain that copying brings over
+the project list, stored conversation text, and selected preferences. Future
+conversations and settings stay in the fork. New work uses separate Git
+worktrees by default, and choosing Local edits the original checkout.
+
+Wait for their choice before launching. A noninteractive launch of `t3 trial`
+can initialize a fresh profile without asking, and opening the desktop app
+directly does not offer the copy. Once the user chooses, follow the
+[trial setup guide](docs/user/install.md#try-the-fork-with-your-t3-projects).
+Use `t3 trial --copy-from <source-home>` only after they choose Copy. If they
+have already made the choice, use it.
+
 ## Dev servers
 
 - `vp i` installs. Worktrees get this from the t3.json setup script; if module resolution looks broken, it probably did not run.
