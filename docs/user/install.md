@@ -62,6 +62,12 @@ text, and selected preferences into `~/.t3-trial`. Press Enter to start fresh.
 For a custom T3 home, use `t3 trial --copy-from /path/to/t3-home` before opening
 the trial. Use `--base-dir` to choose a different trial home.
 
+If you're installing the fork on someone's behalf, ask them whether to start
+fresh or copy their existing setup before launching the trial. Use
+`--copy-from` only after they choose to copy. A launch without an interactive
+terminal can start fresh without asking, and opening the desktop app directly
+does not offer the copy.
+
 New conversations and settings changes stay in the trial. The copy leaves
 attachments, provider sessions, credentials, device pairings, and background
 work in your original setup. Your project folders stay where they are.
