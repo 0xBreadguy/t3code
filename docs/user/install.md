@@ -90,7 +90,7 @@ profile cannot be overwritten by this command.
 On Linux, extract the downloaded AppImage in a separate folder, then run:
 
 ```sh
-./T3-Code-Roles-Preview-*.AppImage --appimage-extract
+./T3-Code-Roles-*-linux-x64.AppImage --appimage-extract
 ELECTRON_RUN_AS_NODE=1 ./squashfs-root/t3code-roles-preview \
   ./squashfs-root/resources/app.asar/apps/server/dist/bin.mjs \
   trial --base-dir ~/.t3-roles-preview --copy-from ~/.t3 --no-browser

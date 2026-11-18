@@ -2839,13 +2839,13 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   distribution?: typeof BuildDistribution.Type,
 ) {
   const rolesPreview = distribution === "roles-preview";
+  // electron-builder expands a deb's ${arch} to amd64; download names use the build architecture.
+  const rolesArtifactName = `T3-Code-Roles-\${version}-${platform === "mac" ? "macos" : platform}-${arch ?? "${arch}"}.\${ext}`;
   const buildConfig: Record<string, unknown> = {
     afterPack: (yield* Path.Path).join(yield* RepoRoot, "scripts/prepare-server-compile-cache.cjs"),
     appId: rolesPreview ? ROLES_PREVIEW_APP_ID : DESKTOP_APP_ID,
     productName: resolveDesktopProductName(version, distribution),
-    artifactName: rolesPreview
-      ? "T3-Code-Roles-Preview-${version}-${arch}.${ext}"
-      : "T3-Code-${version}-${arch}.${ext}",
+    artifactName: rolesPreview ? rolesArtifactName : "T3-Code-${version}-${arch}.${ext}",
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
     // runAsNode stays on: the app starts its server, helpers and the `t3` shim by running this
     // binary as Node, and that mode still accepts inspector flags.
@@ -3007,7 +3007,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     if (buildConfig.publish) {
       buildConfig.appImage = {
         artifactName: rolesPreview
-          ? "T3-Code-Roles-Preview-${arch}.${ext}"
+          ? rolesArtifactName
           : updateChannel === "nightly"
             ? "T3-Code-Nightly-${arch}.${ext}"
             : "T3-Code-${arch}.${ext}",
