@@ -34,6 +34,28 @@ Set `T3CODE_CHANNEL=nightly` for nightly builds or `T3CODE_VERSION=<ver>` to pin
 
 If `t3` reports a server is already running, connect with `t3 pair` or pass a separate `--base-dir`. Run `t3 --help` for all commands.
 
+### Try the fork with your T3 projects
+
+Run the fork's `t3 trial` command on the machine with your project folders. On
+first launch, choose whether to copy your T3 V2 project list, stored conversation
+text, and selected preferences into `~/.t3-trial`. Press Enter to start fresh.
+For a custom T3 home, use `t3 trial --copy-from /path/to/t3-home` before opening
+the trial. Use `--base-dir` to choose a different trial home.
+
+New conversations and settings changes stay in the trial. The copy leaves
+attachments, provider sessions, credentials, device pairings, and background
+work in your original setup. Your project folders stay where they are.
+
+New work defaults to Git worktrees. Continuing a copied conversation creates a
+fresh worktree from the project checkout's current commit. Uncommitted changes in
+your original checkout stay there. Commit in the trial worktree, then merge or
+cherry-pick the commit when you're ready to bring it into your original branch.
+
+If a copied conversation can't create a worktree, you can fix the Git issue and
+retry. To deliberately work in the original checkout, set the project's default
+workspace to **Local** in Settings, then retry. Edits in **Local** affect the
+original files immediately.
+
 ### Intel Macs
 
 There is no standalone `t3` binary for Intel Macs—use the desktop app, or build a server from source with `vp` ([development runbook](../operations/00_development.md#first-checkout)):

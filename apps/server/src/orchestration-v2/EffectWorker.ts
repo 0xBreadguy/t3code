@@ -30,6 +30,7 @@ import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
 import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
+import * as ThreadLaunchService from "./ThreadLaunchService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
@@ -117,6 +118,7 @@ export const layerExecutor: Layer.Layer<
     const threadTitleRegeneration =
       yield* ThreadTitleRegenerationService.ThreadTitleRegenerationService;
     const threads = yield* ThreadManagementService.ThreadManagementService;
+    const launch = yield* Effect.serviceOption(ThreadLaunchService.ThreadLaunchService);
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
     const projectionMaintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
     const settings = yield* ServerSettings.ServerSettingsService;
@@ -239,6 +241,25 @@ export const layerExecutor: Layer.Layer<
                     }),
                 ),
               );
+          case "workspace.prepare": {
+            const runId = effect.request.runId;
+            return Option.match(launch, {
+              onNone: () =>
+                Effect.fail(
+                  new OrchestrationEffectExecutionError({
+                    effectId: effect.id,
+                    effectType: effect.request.type,
+                    cause: "Workspace preparation service is unavailable.",
+                  }),
+                ),
+              onSome: (service) =>
+                service.prepareRun({
+                  commandId: effect.commandId,
+                  threadId: effect.threadId,
+                  runId,
+                }),
+            });
+          }
           case "provider-turn.start":
             return startRun(effect, effect.request.runId, willRetry).pipe(
               Effect.mapError(

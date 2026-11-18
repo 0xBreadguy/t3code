@@ -209,6 +209,7 @@ import { makeInterruptResultTurnItem } from "./runInterruptResult.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { ProviderSwitchServiceV2 } from "./ProviderSwitchService.ts";
 import { isAutomaticCompletionRun, queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
+import { usesTrialWorkspace } from "./trialWorkspace.ts";
 import { isRuntimePolicyAboveCeilingError, RuntimePolicyV2 } from "./RuntimePolicy.ts";
 import {
   endOrphanedNativeSubagent,
@@ -8035,6 +8036,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
     if (dispatchMode.type === "steer_active" || dispatchMode.type === "restart_active") {
       yield* ensureGoalCommandSupported(command, command, modelSelection.instanceId);
+      const { targetRunId } = dispatchMode;
       yield* dispatchSteerIntoRun({
         command,
         events,
@@ -8043,11 +8045,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         modelSelection:
           delegatedCompletion === undefined && notification === undefined
             ? modelSelection
-            : (projection.runs.find((run) => run.id === dispatchMode.targetRunId)?.modelSelection ??
+            : (projection.runs.find((run) => run.id === targetRunId)?.modelSelection ??
               modelSelection),
         delegatedCompletion,
         ...(notification === undefined ? {} : { notification }),
-        targetRunId: dispatchMode.targetRunId,
+        targetRunId,
         messageId: command.messageId,
         text: dispatchText,
         ...(command.context ? { context: command.context } : {}),
@@ -8074,6 +8076,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     // Messages after failed or stopped worktree setup must wait for a worktree,
     // rather than start in the project checkout.
     const latestRun = latestExecutedRun(projection.runs);
+    const prepareTrialThread =
+      usesTrialWorkspace(projection.thread.projectId, projection.thread.id) &&
+      projection.thread.worktreePath === null &&
+      activeRun === undefined &&
+      latestRun?.workspacePreparation?.type !== "worktree" &&
+      (dispatchMode.type === "queue_after_active" || dispatchMode.type === "start_immediately");
     const worktreeMissingRun =
       activeRun === undefined &&
       (dispatchMode.type === "queue_after_active" || dispatchMode.type === "start_immediately") &&
@@ -8083,6 +8091,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection.thread.worktreePath === null
         ? latestRun
         : undefined;
+    if (prepareTrialThread) {
+      const settings = yield* serverSettings.getSettings.pipe(Effect.orDie);
+      dispatchMode = {
+        type: "defer_start",
+        workspaceStrategy:
+          settings.projectSettingsOverrides[projection.thread.projectId]?.defaultThreadEnvMode ===
+          "local"
+            ? { type: "root" }
+            : { type: "worktree", baseRef: "HEAD", startFromOrigin: false },
+      };
+    }
     // A steer whose run already ended still keeps its place in the queue.
     const steerFollowUpSource =
       command.steerFollowUpOfRunId === undefined
@@ -9006,7 +9025,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         threadId: command.threadId,
         request: { type: "provider-turn.start", runId },
       } satisfies PendingOrchestrationEffectV2;
-      if (dispatchMode.type !== "defer_start") {
+      if (prepareTrialThread) {
+        yield* Ref.update(effects, (existing) => [
+          ...existing,
+          {
+            id: `effect:${command.commandId}:workspace.prepare:${runId}`,
+            commandId: command.commandId,
+            threadId: command.threadId,
+            request: { type: "workspace.prepare", runId },
+          } satisfies PendingOrchestrationEffectV2,
+        ]);
+      } else if (dispatchMode.type !== "defer_start") {
         yield* Ref.update(effects, (existing) => [...existing, pendingEffect]);
       }
       return;
@@ -13050,6 +13079,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: "Another run is active on this thread.",
       });
     }
+    const useProjectCheckout =
+      usesTrialWorkspace(projection.thread.projectId, command.threadId) &&
+      state.run.workspacePreparation.type === "worktree" &&
+      projection.thread.worktreePath === null &&
+      (yield* serverSettings.getSettings.pipe(Effect.orDie)).projectSettingsOverrides[
+        projection.thread.projectId
+      ]?.defaultThreadEnvMode === "local";
     const now = yield* DateTime.now;
     const emitEvent = emit(events, command);
     const scope = {
@@ -13088,7 +13124,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     yield* emitEvent({
       ...scope,
       type: "run.updated",
-      payload: { ...state.run, status: "preparing", completedAt: null },
+      payload: {
+        ...state.run,
+        ...(useProjectCheckout ? { workspacePreparation: { type: "root" } as const } : {}),
+        status: "preparing",
+        completedAt: null,
+      },
     });
     // Messages held when this preparation failed follow the run again. A hold
     // from a later run (a stop, say) is not this failure's to release.
