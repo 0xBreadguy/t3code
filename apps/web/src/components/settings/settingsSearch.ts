@@ -331,7 +331,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "roles-models",
-    title: "Roles & models",
+    title: msg("Roles & models"),
     to: "/settings/threads",
     scope: "project-defaults",
     searchTerms: [

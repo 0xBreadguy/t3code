@@ -1,3 +1,4 @@
+import { m } from "../../i18n/messages";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -37,8 +38,8 @@ describe("role delegation mode state", () => {
         targets: [{ ...laptop, projectMode: "always" }],
       }),
     ).toMatchObject({
-      disabledReason: AGENT_ROLE_DELEGATION_MODES_UNSUPPORTED_MESSAGE,
-      note: AGENT_ROLE_DELEGATION_MODES_UNSUPPORTED_MESSAGE,
+      disabledReason: m(AGENT_ROLE_DELEGATION_MODES_UNSUPPORTED_MESSAGE),
+      note: m(AGENT_ROLE_DELEGATION_MODES_UNSUPPORTED_MESSAGE),
       resetDisabled: true,
       inherited: false,
       showReset: true,
@@ -51,8 +52,8 @@ describe("role delegation mode state", () => {
       modesSupported: true,
       targets: [],
     });
-    expect(state.disabledReason).toBe(AGENT_ROLE_DELEGATION_MODES_NO_TARGETS_MESSAGE);
-    expect(state.note).toBe(AGENT_ROLE_DELEGATION_MODES_NO_TARGETS_MESSAGE);
+    expect(state.disabledReason).toBe(m(AGENT_ROLE_DELEGATION_MODES_NO_TARGETS_MESSAGE));
+    expect(state.note).toBe(m(AGENT_ROLE_DELEGATION_MODES_NO_TARGETS_MESSAGE));
     expect(state.inherited).toBe(false);
     expect(state.showReset).toBe(false);
   });

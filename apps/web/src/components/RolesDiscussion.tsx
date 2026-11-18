@@ -1,3 +1,5 @@
+import { msg, T, useGT } from "gt-react";
+import { m } from "../i18n/messages";
 import * as Schema from "effect/Schema";
 import { ExternalLinkIcon, MessagesSquareIcon } from "lucide-react";
 
@@ -31,15 +33,15 @@ function showRolesDiscussionPrompt() {
       .catch(() => undefined);
   };
   const id = toastManager.add({
-    title: "Should Roles be part of T3 Code?",
-    description: "Tell the T3 Code team why or why not in the Roles discussion on GitHub.",
+    title: m(msg("Should Roles be part of T3 Code?")),
+    description: m(msg("Tell the T3 Code team why or why not in the Roles discussion on GitHub.")),
     timeout: 0,
     onClose: dismiss,
-    actionProps: { children: "Open discussion", onClick: openDiscussion },
+    actionProps: { children: m(msg("Open discussion")), onClick: openDiscussion },
     data: {
       actionLayout: "stacked-end",
       leadingIcon: <MessagesSquareIcon aria-hidden className="size-4" />,
-      secondaryActionProps: { children: "Dismiss", onClick: close },
+      secondaryActionProps: { children: m(msg("Dismiss")), onClick: close },
       secondaryActionVariant: "ghost",
     },
   });
@@ -72,14 +74,15 @@ export async function recordRolesDiscussionPromptSent(): Promise<void> {
 }
 
 export function RolesDiscussionButton() {
+  const gt = useGT();
   return (
     <Button
       variant="ghost-muted"
       size="sm"
-      title="Should Roles be part of T3 Code? Say why or why not on GitHub."
+      title={gt("Should Roles be part of T3 Code? Say why or why not on GitHub.")}
       onClick={() => void ensureLocalApi().shell.openExternal(ROLES_DISCUSSION_URL)}
     >
-      Discuss on GitHub
+      <T>Discuss on GitHub</T>
       <ExternalLinkIcon className="size-3.5" aria-hidden="true" />
     </Button>
   );

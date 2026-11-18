@@ -1,3 +1,5 @@
+import { msg, T, useGT, useMessages } from "gt-react";
+import type { MessageResolver } from "../../i18n/messages";
 import {
   type AgentRole,
   type AgentRoleDelegationMode,
@@ -93,21 +95,50 @@ function modelAvailability(
     ReadonlyArray<{ slug: string; isUnavailable?: boolean | undefined }>
   >,
   environmentLabel: string,
+  resolve: MessageResolver,
 ): string | null {
   const entry = entries.find((candidate) => candidate.instanceId === selection.instanceId);
   if (entry === undefined) {
-    return `${selection.instanceId} is not configured on ${environmentLabel}.`;
+    return resolve(
+      msg("{provider} is not configured on {environment}.", {
+        provider: selection.instanceId,
+        environment: environmentLabel,
+      }),
+    );
   }
-  if (!entry.enabled) return `${entry.displayName} is disabled on ${environmentLabel}.`;
-  if (!entry.isAvailable) return `${entry.displayName} is unavailable on ${environmentLabel}.`;
+  if (!entry.enabled)
+    return resolve(
+      msg("{provider} is disabled on {environment}.", {
+        provider: entry.displayName,
+        environment: environmentLabel,
+      }),
+    );
+  if (!entry.isAvailable)
+    return resolve(
+      msg("{provider} is unavailable on {environment}.", {
+        provider: entry.displayName,
+        environment: environmentLabel,
+      }),
+    );
   const option = (modelOptions.get(selection.instanceId) ?? []).find(
     (candidate) => candidate.slug === selection.model,
   );
   if (option === undefined) {
-    return `${selection.model} is not offered by ${entry.displayName} on ${environmentLabel}.`;
+    return resolve(
+      msg("{model} is not offered by {provider} on {environment}.", {
+        model: selection.model,
+        provider: entry.displayName,
+        environment: environmentLabel,
+      }),
+    );
   }
   if (option.isUnavailable) {
-    return `${selection.model} is unavailable on ${environmentLabel}.`;
+    return resolve(
+      msg("{model} is unavailable on {environment}.", {
+        model: selection.model,
+        environment: environmentLabel,
+      }),
+    );
   }
   return null;
 }
@@ -123,13 +154,17 @@ function RoleDelegationControl({
   readonly onChange: (mode: AgentRoleDelegationMode) => void;
   readonly onReset: () => void;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const disabled = state.disabledReason !== null;
   return (
     <div className="mt-3 flex flex-col gap-2 @min-[32rem]/settings-row:flex-row @min-[32rem]/settings-row:items-center @min-[32rem]/settings-row:justify-between">
       <div className="flex min-w-0 flex-wrap items-center gap-2">
-        <span className="text-xs font-medium text-muted-foreground">Delegation</span>
+        <span className="text-xs font-medium text-muted-foreground">
+          <T>Delegation</T>
+        </span>
         <ToggleGroup
-          aria-label={`${title} delegation mode`}
+          aria-label={gt("{role} delegation mode", { role: title })}
           variant="segmented"
           disabled={disabled}
           value={state.value === null ? [] : [state.value]}
@@ -139,13 +174,17 @@ function RoleDelegationControl({
         >
           {(Object.keys(ROLE_DELEGATION_MODE_LABELS) as AgentRoleDelegationMode[]).map((mode) => (
             <Toggle key={mode} value={mode} inherited={state.inherited}>
-              {ROLE_DELEGATION_MODE_LABELS[mode]}
+              {messages(ROLE_DELEGATION_MODE_LABELS[mode])}
             </Toggle>
           ))}
         </ToggleGroup>
         {state.showReset ? (
           <SettingResetButton
-            ariaLabel={settingResetAriaLabel(`${title} delegation`, state.resetTooltip)}
+            ariaLabel={settingResetAriaLabel(
+              gt("{role} delegation", { role: title }),
+              state.resetTooltip,
+              messages,
+            )}
             tooltip={state.resetTooltip}
             disabled={state.resetDisabled}
             onClick={onReset}
@@ -209,6 +248,8 @@ function RoleRow({
   readonly onDelegationChange: (mode: AgentRoleDelegationMode) => void;
   readonly onDelegationReset: () => void;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const navigate = useNavigate();
   const modelOptions = getCustomModelOptionsByInstance(
     settings,
@@ -228,17 +269,19 @@ function RoleRow({
   const unavailableReason =
     selection === null
       ? null
-      : modelAvailability(selection, entries, modelOptions, environmentLabel);
+      : modelAvailability(selection, entries, modelOptions, environmentLabel, messages);
   const status =
     unavailableReason === null
       ? undefined
-      : `${unavailableReason} Choose another model, or connect the provider.`;
+      : gt("{reason} Choose another model, or connect the provider.", {
+          reason: unavailableReason,
+        });
   const triggerLabel = mixed
-    ? "Mixed"
+    ? gt("Mixed")
     : selection === null
-      ? "Not set"
+      ? gt("Not set")
       : unavailableReason !== null
-        ? `${selection.model} (Unavailable)`
+        ? gt("{model} (Unavailable)", { model: selection.model })
         : null;
   const pickerTriggerClassName = modelInherited
     ? SETTINGS_PICKER_TRIGGER_INHERITED_CLASSNAME
@@ -246,9 +289,9 @@ function RoleRow({
   const inheritedModelName = modelLabel(inheritedModel, modelOptions);
   const resetTooltip = projectScope
     ? inheritedModelName === null
-      ? "Reset to inherited value"
-      : `Reset to inherited value (${inheritedModelName})`
-    : "Reset model";
+      ? gt("Reset to inherited value")
+      : gt("Reset to inherited value ({value})", { value: inheritedModelName })
+    : gt("Reset model");
 
   return (
     <SettingsRow
@@ -263,7 +306,11 @@ function RoleRow({
       resetAction={
         showReset ? (
           <SettingResetButton
-            ariaLabel={settingResetAriaLabel(`${title} model`, resetTooltip)}
+            ariaLabel={settingResetAriaLabel(
+              gt("{role} model", { role: title }),
+              resetTooltip,
+              messages,
+            )}
             tooltip={resetTooltip}
             onClick={onReset}
           />
@@ -271,7 +318,9 @@ function RoleRow({
       }
       control={
         activeInstanceId === null ? (
-          <span className="text-sm text-muted-foreground">No providers available</span>
+          <span className="text-sm text-muted-foreground">
+            <T>No providers available</T>
+          </span>
         ) : (
           <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
             <ProviderModelPicker
@@ -282,7 +331,7 @@ function RoleRow({
               instanceEntries={entries}
               modelOptionsByInstance={modelOptions}
               triggerClassName={pickerTriggerClassName}
-              triggerAriaLabel={`${title} model`}
+              triggerAriaLabel={gt("{role} model", { role: title })}
               {...(triggerLabel === null ? {} : { triggerLabel })}
               getModelDisabledReason={modelDisabledReason}
               onOpenProviderSetup={(instanceId) => {
@@ -297,7 +346,7 @@ function RoleRow({
                 if (reason !== null) {
                   toastManager.add({
                     type: "error",
-                    title: `${title} model not saved`,
+                    title: gt("{role} model not saved", { role: title }),
                     description: reason,
                   });
                   return;
@@ -343,6 +392,8 @@ function RoleRow({
 }
 
 export function RolesSettings() {
+  const gt = useGT();
+  const messages = useMessages();
   const { scope, target, connectedEnvironments, targets } = useSettingsScope();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
@@ -366,7 +417,7 @@ export function RolesSettings() {
         : [],
     ),
   );
-  const environmentLabel = representative?.label ?? "this environment";
+  const environmentLabel = representative?.label ?? gt("this environment");
   // An older server drops the key silently, so guard the whole row's mode control
   // rather than showing a choice that will not be stored.
   const delegationModesSupported =
@@ -392,11 +443,13 @@ export function RolesSettings() {
     return (
       <SettingsSection
         id="roles-models"
-        title="Roles & models"
+        title={gt("Roles & models")}
         headerAction={<RolesDiscussionButton />}
       >
         <p className="px-4 py-3 text-sm text-muted-foreground">
-          Update T3 Code on {unsupportedRoleLabels.join(", ")} to set up roles.
+          {gt("Update T3 Code on {environments} to set up roles.", {
+            environments: unsupportedRoleLabels.join(", "),
+          })}
         </p>
       </SettingsSection>
     );
@@ -405,7 +458,7 @@ export function RolesSettings() {
   return (
     <SettingsSection
       id="roles-models"
-      title="Roles & models"
+      title={gt("Roles & models")}
       headerAction={<RolesDiscussionButton />}
     >
       {AGENT_ROLE_ROWS.filter((row) => roleSupported(row.role)).map((row) => {
@@ -476,27 +529,30 @@ export function RolesSettings() {
             });
         const instructionSupported =
           targets.length > 0 && instructionTargets.length === targets.length;
-        const delegationState = roleDelegationModeState({
-          projectScope: isProjectScope,
-          modesSupported: delegationModesSupported,
-          targets: targets.map((candidate) => ({
-            projectMode:
-              candidate.projectId === null
-                ? undefined
-                : candidate.settings.projectSettingsOverrides[candidate.projectId]
-                    ?.agentRoleDelegationModes?.[row.role],
-            environmentMode: environmentSettingsById.get(candidate.environmentId)
-              ?.agentRoleDelegationModes[row.role],
-            hasModel: effectiveRole(candidate, environmentSettingsById, row.role) !== null,
-          })),
-        });
+        const delegationState = roleDelegationModeState(
+          {
+            projectScope: isProjectScope,
+            modesSupported: delegationModesSupported,
+            targets: targets.map((candidate) => ({
+              projectMode:
+                candidate.projectId === null
+                  ? undefined
+                  : candidate.settings.projectSettingsOverrides[candidate.projectId]
+                      ?.agentRoleDelegationModes?.[row.role],
+              environmentMode: environmentSettingsById.get(candidate.environmentId)
+                ?.agentRoleDelegationModes[row.role],
+              hasModel: effectiveRole(candidate, environmentSettingsById, row.role) !== null,
+            })),
+          },
+          messages,
+        );
 
         return (
           <RoleRow
             key={row.role}
             role={row.role}
-            title={row.title}
-            description={row.description}
+            title={messages(row.title)}
+            description={messages(row.description)}
             selection={selection}
             mixed={mixed}
             showReset={showReset}
@@ -528,26 +584,41 @@ export function RolesSettings() {
       })}
       <div className="space-y-1 px-3 py-2.5 text-xs leading-normal text-muted-foreground sm:px-4">
         <p>
-          These models, delegation modes, and instructions apply to T3-managed delegated task work.
-          Your own threads and a provider's own subagents don't use them.
+          <T>
+            {" "}
+            These models, delegation modes, and instructions apply to T3-managed delegated task
+            work. Your own threads and a provider's own subagents don't use them.
+          </T>
         </p>
         <p>
-          A role is active only when it has a model. With no role models set, nothing changes; with
-          one or more, T3-managed parents check these roles before doing the work. Prefer delegates
-          substantial matching work and keeps small changes in the parent thread. Always delegates
-          any matching work.
+          <T>
+            {" "}
+            A role is active only when it has a model. With no role models set, nothing changes;
+            with one or more, T3-managed parents check these roles before doing the work. Prefer
+            delegates substantial matching work and keeps small changes in the parent thread. Always
+            delegates any matching work.
+          </T>
         </p>
         <p>
-          A review or test model does not run anything by itself. Worker check reports stay
-          unverified until you review them.
+          <T>
+            {" "}
+            A review or test model does not run anything by itself. Worker check reports stay
+            unverified until you review them.
+          </T>
         </p>
         <p>
-          A conversation that is already running keeps its model. A delegated worker keeps the
-          instructions it launched with; instruction changes apply from the next launch.
+          <T>
+            {" "}
+            A conversation that is already running keeps its model. A delegated worker keeps the
+            instructions it launched with; instruction changes apply from the next launch.
+          </T>
         </p>
         <p>
-          All environments writes the same roles to each selected environment. It does not link
-          them; a later change on one environment stays there.
+          <T>
+            {" "}
+            All environments writes the same roles to each selected environment. It does not link
+            them; a later change on one environment stays there.
+          </T>
         </p>
       </div>
     </SettingsSection>

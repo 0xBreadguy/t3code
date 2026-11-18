@@ -1,7 +1,7 @@
 > [!NOTE]
 > **This is an unofficial fork of T3 Code.** It adds one feature, Roles & models, and ships it as a separate preview app you can install next to your normal T3 Code. The T3 Code team didn't build it, so please report problems here and not on upstream.
 >
-> `main` is upstream [`pingdotgg/t3code`](https://github.com/pingdotgg/t3code) at [`60375a5636`](https://github.com/pingdotgg/t3code/commit/60375a5636) (November 25, 2026), plus this note and issue forms that keep feedback here. The Roles code is on the [`roles-preview`](https://github.com/0xBreadguy/t3code/tree/roles-preview) branch.
+> `main` contains upstream [`pingdotgg/t3code`](https://github.com/pingdotgg/t3code) plus this note and issue forms that keep feedback here. The Roles code is on the [`roles-preview`](https://github.com/0xBreadguy/t3code/tree/roles-preview) branch.
 >
 > What the preview changes:
 >

@@ -1,3 +1,4 @@
+import { msg } from "gt-react";
 import type { AgentRole } from "@t3tools/contracts";
 
 export interface AgentRoleRow {
@@ -9,39 +10,40 @@ export interface AgentRoleRow {
 export const AGENT_ROLE_ROWS: ReadonlyArray<AgentRoleRow> = [
   {
     role: "architecture",
-    title: "Architecture",
-    description: "Plans structure, boundaries, and technical direction.",
+    title: msg("Architecture"),
+    description: msg("Plans structure, boundaries, and technical direction."),
   },
   {
     role: "implementation",
-    title: "Implementation",
-    description: "Writes code for a scoped task.",
+    title: msg("Implementation"),
+    description: msg("Writes code for a scoped task."),
   },
   {
     role: "research",
-    title: "Research",
-    description: "Investigates the codebase and outside material.",
+    title: msg("Research"),
+    description: msg("Investigates the codebase and outside material."),
   },
   {
     role: "review",
-    title: "Review",
-    description:
+    title: msg("Review"),
+    description: msg(
       "Reviews changes and reports findings. Selecting a review model does not run a review.",
+    ),
   },
   {
     role: "security",
-    title: "Security",
-    description: "Researches vulnerabilities, models threats, and recommends hardening.",
+    title: msg("Security"),
+    description: msg("Researches vulnerabilities, models threats, and recommends hardening."),
   },
   {
     role: "design",
-    title: "Design",
-    description: "Works on interface, interaction, and visual design.",
+    title: msg("Design"),
+    description: msg("Works on interface, interaction, and visual design."),
   },
-  { role: "test", title: "Test", description: "Writes and runs tests." },
+  { role: "test", title: msg("Test"), description: msg("Writes and runs tests.") },
   {
     role: "general",
-    title: "General",
-    description: "Work that does not fit another role.",
+    title: msg("General"),
+    description: msg("Work that does not fit another role."),
   },
 ];

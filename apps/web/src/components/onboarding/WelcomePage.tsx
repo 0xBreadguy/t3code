@@ -348,7 +348,13 @@ function TelemetryNotice({ environmentId }: { readonly environmentId: Environmen
   const messages = useMessages();
   const telemetryOff = managedTelemetryOffMessage(useManagedPolicy(environmentId), messages);
   if (APP_STAGE_LABEL.trim() === "Roles Preview") {
-    const notice = welcomeTelemetryNotice({ stageLabel: APP_STAGE_LABEL, policyMessage: telemetryOff });
+    const notice = welcomeTelemetryNotice(
+      {
+        stageLabel: APP_STAGE_LABEL,
+        policyMessage: telemetryOff,
+      },
+      messages,
+    );
     return (
       <p className="mt-auto pt-12 text-2xs leading-relaxed text-muted-foreground/70">
         {notice.text} {notice.privacyLead}{" "}
@@ -358,7 +364,7 @@ function TelemetryNotice({ environmentId }: { readonly environmentId: Environmen
           target="_blank"
           rel="noreferrer noopener"
         >
-          privacy policy
+          <T>privacy policy</T>
         </a>
         .
       </p>
