@@ -80,6 +80,35 @@ retry. To deliberately work in the original checkout, set the project's default
 workspace to **Local** in Settings, then retry. Edits in **Local** affect the
 original files immediately.
 
+#### Using the packaged Roles Preview
+
+The Roles Preview does not install the `t3` command. Use its bundled CLI before
+opening the app for the first time, and choose `~/.t3-roles-preview` so the desktop
+app opens the copied setup. The destination must be fresh; an existing preview
+profile cannot be overwritten by this command.
+
+On Linux, extract the downloaded AppImage in a separate folder, then run:
+
+```sh
+./T3-Code-Roles-Preview-*.AppImage --appimage-extract
+ELECTRON_RUN_AS_NODE=1 ./squashfs-root/t3code-roles-preview \
+  ./squashfs-root/resources/app.asar/apps/server/dist/bin.mjs \
+  trial --base-dir ~/.t3-roles-preview --copy-from ~/.t3 --no-browser
+```
+
+On macOS, after copying the app into Applications:
+
+```sh
+app="/Applications/T3 Code Roles Preview.app"
+ELECTRON_RUN_AS_NODE=1 "$app/Contents/MacOS/T3 Code Roles Preview" \
+  "$app/Contents/Resources/app.asar/apps/server/dist/bin.mjs" \
+  trial --base-dir ~/.t3-roles-preview --copy-from ~/.t3 --no-browser
+```
+
+If the copy requests provider replacements, add the `--map-provider` choices
+described above and retry. Once the copy succeeds, stop the terminal server with
+Ctrl+C before opening the desktop app.
+
 ### Intel Macs
 
 There is no standalone `t3` binary for Intel Macs—use the desktop app, or build a server from source with `vp` ([development runbook](../operations/00_development.md#first-checkout)):

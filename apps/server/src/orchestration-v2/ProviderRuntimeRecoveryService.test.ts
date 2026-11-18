@@ -928,6 +928,7 @@ it.effect(
       assert.equal(summary.stoppedSessions, 1);
       assert.equal(summary.retiredEffects, 2);
       assert.deepEqual(committedInput?.cancelUnsettledEffects?.effectTypes, [
+        "workspace.prepare",
         "provider-session.apply-model-selection",
         "provider-session.apply-thread-title",
         "provider-turn.start",
