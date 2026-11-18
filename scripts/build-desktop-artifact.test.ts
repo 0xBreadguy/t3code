@@ -601,7 +601,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
       assert.equal(preview.appId, "com.t3tools.t3code.rolespreview");
       assert.equal(preview.productName, "T3 Code Roles Preview");
-      assert.equal(preview.artifactName, "T3-Code-Roles-Preview-${version}-${arch}.${ext}");
+      assert.equal(preview.artifactName, "T3-Code-Roles-${version}-linux-x64.${ext}");
       assert.nestedPropertyVal(preview, "linux.executableName", "t3code-roles-preview");
       assert.nestedPropertyVal(
         preview,
@@ -643,6 +643,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         ),
       ]);
 
+      assert.equal(preview.artifactName, "T3-Code-Roles-${version}-macos-arm64.${ext}");
       const previewMac = preview.mac as { identity?: string; hardenedRuntime?: boolean };
       const standardMac = standard.mac as { identity?: string; hardenedRuntime?: boolean };
       assert.equal(previewMac.identity, "-");
