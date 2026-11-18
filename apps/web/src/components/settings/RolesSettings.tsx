@@ -17,6 +17,7 @@ import { getCustomModelOptionsByInstance, selectsPlanAgent } from "../../modelSe
 import { providerInstanceEntriesFor, type ProviderInstanceEntry } from "../../providerInstances";
 import { useEnvironmentProviders, useEnvironments } from "../../state/environments";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
+import { RolesDiscussionButton } from "../RolesDiscussion";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { getDisplayModelName, type ModelEsque } from "../chat/providerIconUtils";
@@ -389,7 +390,11 @@ export function RolesSettings() {
   const unsupportedRoleLabels = scopedRolesUnsupportedLabels(targets, connectedEnvironments);
   if (unsupportedRoleLabels.length > 0) {
     return (
-      <SettingsSection id="roles-models" title="Roles & models">
+      <SettingsSection
+        id="roles-models"
+        title="Roles & models"
+        headerAction={<RolesDiscussionButton />}
+      >
         <p className="px-4 py-3 text-sm text-muted-foreground">
           Update T3 Code on {unsupportedRoleLabels.join(", ")} to set up roles.
         </p>
@@ -398,7 +403,11 @@ export function RolesSettings() {
   }
 
   return (
-    <SettingsSection id="roles-models" title="Roles & models">
+    <SettingsSection
+      id="roles-models"
+      title="Roles & models"
+      headerAction={<RolesDiscussionButton />}
+    >
       {AGENT_ROLE_ROWS.filter((row) => roleSupported(row.role)).map((row) => {
         const selections = targets.map((candidate) =>
           effectiveRole(candidate, environmentSettingsById, row.role),
