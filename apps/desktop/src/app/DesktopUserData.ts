@@ -4,6 +4,8 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
+import { ROLES_PREVIEW_DISTRIBUTION, type DesktopDistribution } from "./DesktopDistribution.ts";
+
 export class DesktopUserDataInitializationError extends Schema.TaggedError<DesktopUserDataInitializationError>()(
   "DesktopUserDataInitializationError",
   {
@@ -36,9 +38,15 @@ export const resolveUserDataPath = Effect.fn("desktop.userData.resolveUserDataPa
     readonly appDataDirectory: string;
     readonly isDevelopment: boolean;
     readonly platform: NodeJS.Platform;
+    readonly distribution?: DesktopDistribution | null;
   }) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    // Cookies, Chromium databases and the single-instance lock live here, so a preview build
+    // must never share this profile with a normal install.
+    if (input.distribution === ROLES_PREVIEW_DISTRIBUTION) {
+      return path.join(input.appDataDirectory, "t3code-roles-preview");
+    }
     const names = input.isDevelopment
       ? { current: "t3code-dev", legacy: "T3 Code (Dev)" }
       : { current: "t3code-v2", legacy: "T3 Code (Alpha)" };

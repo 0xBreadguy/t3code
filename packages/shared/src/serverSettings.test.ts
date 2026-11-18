@@ -1095,3 +1095,202 @@ describe("resolveSpeechPostProcessingModelSelection", () => {
     ).toBeNull();
   });
 });
+
+describe("agent role settings", () => {
+  const projectId = ProjectId.make("project-role-settings");
+  const architecture = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "opus-5" };
+  const review = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6-sol" };
+  const security = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "security-model" };
+
+  it("merges one role without erasing the other roles", () => {
+    const once = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      agentRoleModels: { architecture },
+    });
+    const twice = applyServerSettingsPatch(once, {
+      agentRoleModels: { review },
+    });
+    expect(twice.agentRoleModels).toEqual({ architecture, review });
+    expect(
+      applyServerSettingsPatch(twice, { agentRoleModels: { architecture: null } }).agentRoleModels,
+    ).toEqual({ review });
+    const withSecurity = applyServerSettingsPatch(twice, {
+      agentRoleModels: { security },
+    });
+    expect(withSecurity.agentRoleModels).toEqual({ architecture, review, security });
+    expect(
+      applyServerSettingsPatch(withSecurity, { agentRoleModels: { security: null } })
+        .agentRoleModels,
+    ).toEqual({ architecture, review });
+  });
+
+  it("keeps an unknown future role key round-tripping through a patch", () => {
+    const future = { instanceId: ProviderInstanceId.make("codex"), model: "future-model" };
+    const stored = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      agentRoleModels: { future_role: future } as never,
+    });
+    expect(stored.agentRoleModels).toMatchObject({ future_role: future });
+  });
+
+  it("merges one project's roles and keeps unrelated override keys", () => {
+    const withProject = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      projectSettingsOverrides: {
+        [projectId]: { defaultAutoPull: true, agentRoleModels: { architecture } },
+      },
+    });
+    const withReview = applyServerSettingsPatch(withProject, {
+      projectAgentRoleModels: { [projectId]: { review } },
+    });
+    expect(withReview.projectSettingsOverrides[projectId]).toMatchObject({
+      defaultAutoPull: true,
+      agentRoleModels: { architecture, review },
+    });
+    expect(
+      applyServerSettingsPatch(withReview, {
+        projectAgentRoleModels: { [projectId]: { architecture: null } },
+      }).projectSettingsOverrides[projectId]?.agentRoleModels,
+    ).toEqual({ review });
+    const withSecurity = applyServerSettingsPatch(withReview, {
+      projectAgentRoleModels: { [projectId]: { security } },
+    });
+    expect(withSecurity.projectSettingsOverrides[projectId]).toMatchObject({
+      defaultAutoPull: true,
+      agentRoleModels: { architecture, review, security },
+    });
+    expect(
+      applyServerSettingsPatch(withSecurity, {
+        projectAgentRoleModels: { [projectId]: { security: null } },
+      }).projectSettingsOverrides[projectId]?.agentRoleModels,
+    ).toEqual({ architecture, review });
+  });
+
+  it("merges one role's instructions without erasing other roles or models", () => {
+    const once = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      agentRoleModels: { architecture },
+      agentRoleInstructions: { architecture: "Architecture text." },
+    });
+    const twice = applyServerSettingsPatch(once, {
+      agentRoleInstructions: { review: "  Review text.\n" },
+    });
+    expect(twice.agentRoleInstructions).toEqual({
+      architecture: "Architecture text.",
+      review: "  Review text.\n",
+    });
+    expect(twice.agentRoleModels).toEqual({ architecture });
+    expect(
+      applyServerSettingsPatch(twice, {
+        agentRoleInstructions: { architecture: null },
+      }).agentRoleInstructions,
+    ).toEqual({ review: "  Review text.\n" });
+    expect(
+      applyServerSettingsPatch(twice, {
+        agentRoleInstructions: { review: "" },
+      }).agentRoleInstructions,
+    ).toEqual({ architecture: "Architecture text.", review: "" });
+    const withSecurity = applyServerSettingsPatch(twice, {
+      agentRoleInstructions: { security: "Security text." },
+    });
+    expect(withSecurity.agentRoleInstructions).toEqual({
+      architecture: "Architecture text.",
+      review: "  Review text.\n",
+      security: "Security text.",
+    });
+    expect(
+      applyServerSettingsPatch(withSecurity, {
+        agentRoleInstructions: { security: null },
+      }).agentRoleInstructions,
+    ).toEqual({ architecture: "Architecture text.", review: "  Review text.\n" });
+  });
+
+  it("merges one project's instructions and keeps unrelated override keys", () => {
+    const withProject = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      projectSettingsOverrides: {
+        [projectId]: {
+          defaultAutoPull: true,
+          agentRoleModels: { architecture },
+          agentRoleInstructions: { architecture: "Project architecture." },
+        },
+      },
+    });
+    const withReview = applyServerSettingsPatch(withProject, {
+      projectAgentRoleInstructions: { [projectId]: { review: "Project review." } },
+    });
+    expect(withReview.projectSettingsOverrides[projectId]).toMatchObject({
+      defaultAutoPull: true,
+      agentRoleModels: { architecture },
+      agentRoleInstructions: { architecture: "Project architecture.", review: "Project review." },
+    });
+    expect(
+      applyServerSettingsPatch(withReview, {
+        projectAgentRoleInstructions: { [projectId]: { architecture: null } },
+      }).projectSettingsOverrides[projectId]?.agentRoleInstructions,
+    ).toEqual({ review: "Project review." });
+    const withSecurity = applyServerSettingsPatch(withReview, {
+      projectAgentRoleInstructions: { [projectId]: { security: "Project security." } },
+    });
+    expect(withSecurity.projectSettingsOverrides[projectId]).toMatchObject({
+      agentRoleInstructions: {
+        architecture: "Project architecture.",
+        review: "Project review.",
+        security: "Project security.",
+      },
+    });
+    expect(
+      applyServerSettingsPatch(withSecurity, {
+        projectAgentRoleInstructions: { [projectId]: { security: null } },
+      }).projectSettingsOverrides[projectId]?.agentRoleInstructions,
+    ).toEqual({ architecture: "Project architecture.", review: "Project review." });
+  });
+
+  it("merges one role's delegation mode without erasing other roles", () => {
+    const once = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      agentRoleDelegationModes: { review: "always" },
+    });
+    const twice = applyServerSettingsPatch(once, {
+      agentRoleDelegationModes: { design: "always" },
+    });
+    expect(twice.agentRoleDelegationModes).toEqual({ review: "always", design: "always" });
+    expect(
+      applyServerSettingsPatch(twice, { agentRoleDelegationModes: { review: null } })
+        .agentRoleDelegationModes,
+    ).toEqual({ design: "always" });
+    expect(
+      applyServerSettingsPatch(twice, { agentRoleDelegationModes: { review: "prefer" } })
+        .agentRoleDelegationModes,
+    ).toEqual({ review: "prefer", design: "always" });
+  });
+
+  it("keeps an unknown future role key round-tripping through a mode patch", () => {
+    const stored = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      agentRoleDelegationModes: { future_role: "always" } as never,
+    });
+    expect(stored.agentRoleDelegationModes).toMatchObject({ future_role: "always" });
+  });
+
+  it("merges one project's delegation modes and keeps unrelated override keys", () => {
+    const withProject = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      projectSettingsOverrides: {
+        [projectId]: {
+          defaultAutoPull: true,
+          agentRoleDelegationModes: { review: "always" },
+        },
+      },
+    });
+    const withDesign = applyServerSettingsPatch(withProject, {
+      projectAgentRoleDelegationModes: { [projectId]: { design: "always" } },
+    });
+    expect(withDesign.projectSettingsOverrides[projectId]).toMatchObject({
+      defaultAutoPull: true,
+      agentRoleDelegationModes: { review: "always", design: "always" },
+    });
+    expect(
+      applyServerSettingsPatch(withDesign, {
+        projectAgentRoleDelegationModes: { [projectId]: { review: null } },
+      }).projectSettingsOverrides[projectId]?.agentRoleDelegationModes,
+    ).toEqual({ design: "always" });
+    expect(
+      applyServerSettingsPatch(withDesign, {
+        projectAgentRoleDelegationModes: { [projectId]: null },
+      }).projectSettingsOverrides[projectId],
+    ).toEqual({ defaultAutoPull: true });
+  });
+});

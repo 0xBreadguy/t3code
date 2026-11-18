@@ -188,6 +188,10 @@ export function SettingsSearchTarget({
 export const SETTINGS_PICKER_TRIGGER_CLASSNAME =
   "min-w-0 max-w-none shrink-0 border-input bg-background font-normal text-foreground shadow-xs/5 hover:bg-accent/50 dark:bg-input/32 [&_svg[data-composer-control-chevron]]:stroke-[1.75] [&_svg[data-composer-control-chevron]]:opacity-70";
 
+// Inherited from the environment: dashed and unfilled, like a value that is not this scope's own.
+export const SETTINGS_PICKER_TRIGGER_INHERITED_CLASSNAME =
+  "min-w-0 max-w-none shrink-0 border-dashed border-muted-foreground/40 bg-transparent font-normal text-muted-foreground shadow-none hover:bg-accent/50 dark:bg-transparent [&_svg[data-composer-control-chevron]]:stroke-[1.75] [&_svg[data-composer-control-chevron]]:opacity-70";
+
 export function PolicyTooltip({ children }: { readonly children: string }) {
   return (
     <Tooltip>
@@ -315,6 +319,7 @@ export function SettingsRow({
   devicePreference = false,
   settingKeys = EMPTY_SETTING_KEYS,
   managedPaths = EMPTY_MANAGED_PATHS,
+  environmentWide: environmentWideOverride,
   mixed: mixedOverride,
   managed,
   children,
@@ -333,6 +338,8 @@ export function SettingsRow({
   settingKeys?: readonly (keyof ServerSettings)[];
   /** Dot paths inside a setting, such as `storageCleanup.logsAfterDays`, an administrator can lock. */
   managedPaths?: readonly string[];
+  /** Rows with their own inheritance readback set this because they pass no setting keys. */
+  environmentWide?: boolean;
   mixed?: boolean;
   /** Why an administrator's policy turns this row's control off, from the contract's denial helpers. */
   managed?: string | undefined;
@@ -373,7 +380,8 @@ export function SettingsRow({
   const isProjectScope =
     context !== null && (context.scope.kind === "project" || context.scope.kind === "checkout");
   const scopedKeys = settingKeys.filter(isProjectScopedSettingKey);
-  const environmentWide = isProjectScope && serverScoped && scopedKeys.length === 0;
+  const environmentWide =
+    environmentWideOverride ?? (isProjectScope && serverScoped && scopedKeys.length === 0);
   const deviceReadOnly = isProjectScope && devicePreference;
   const mixed =
     mixedOverride ?? (context !== null && scopedSettingsAreMixed(context.targets, settingKeys));
@@ -560,11 +568,15 @@ export function SettingsRow({
 export function SettingResetButton({
   label,
   tooltip = "Reset to default",
+  ariaLabel,
   disabled = false,
   onClick,
 }: {
-  label: string;
+  /** What this resets; the accessible name defaults to `Reset <label> to default`. */
+  label?: string;
   tooltip?: string;
+  /** The accessible name, for a reset whose tooltip names what it falls back to. */
+  ariaLabel?: string;
   disabled?: boolean;
   onClick: () => void;
 }) {
@@ -575,7 +587,7 @@ export function SettingResetButton({
           <Button
             size="icon-micro"
             variant="ghost-muted"
-            aria-label={`Reset ${label} to default`}
+            aria-label={ariaLabel ?? `Reset ${label ?? "setting"} to default`}
             disabled={disabled}
             onClick={(event) => {
               event.stopPropagation();
@@ -589,6 +601,12 @@ export function SettingResetButton({
       <TooltipPopup side="top">{tooltip}</TooltipPopup>
     </Tooltip>
   );
+}
+
+/** A reset's name says what it resets, built from its tooltip so the two cannot drift. */
+export function settingResetAriaLabel(subject: string, tooltip: string): string {
+  const fallbackTarget = tooltip.startsWith("Reset to ") ? tooltip.slice("Reset to ".length) : null;
+  return fallbackTarget === null ? `Reset ${subject}` : `Reset ${subject} to ${fallbackTarget}`;
 }
 
 export function SettingsPageContainer({

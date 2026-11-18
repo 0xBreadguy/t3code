@@ -40,7 +40,7 @@ import {
 import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
 
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
-import { MOBILE_APP_URL } from "../../branding";
+import { APP_STAGE_LABEL, MOBILE_APP_URL } from "../../branding";
 import { isElectron } from "../../env";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { usePersistEnvironmentProviderInstanceMutation } from "../../hooks/useSettings";
@@ -74,6 +74,7 @@ import {
   turnedOnInstance,
   welcomeAgentState,
   welcomeOffersPhone,
+  welcomeTelemetryNotice,
 } from "../../onboarding/welcomePage.logic";
 import {
   StoredWelcomeImportSelection,
@@ -326,11 +327,11 @@ export function WelcomePage({
 }
 
 function TelemetryNotice({ environmentId }: { readonly environmentId: EnvironmentId }) {
-  const telemetryOff = managedTelemetryOffMessage(useManagedPolicy(environmentId));
+  const policyMessage = managedTelemetryOffMessage(useManagedPolicy(environmentId));
+  const notice = welcomeTelemetryNotice({ stageLabel: APP_STAGE_LABEL, policyMessage });
   return (
     <p className="mt-auto pt-12 text-2xs leading-relaxed text-muted-foreground/70">
-      {telemetryOff ?? "T3 Code collects anonymous usage data to improve the app."}{" "}
-      {telemetryOff === undefined ? "To opt out, see the" : "See the"}{" "}
+      {notice.text} {notice.privacyLead}{" "}
       <a
         className="underline decoration-current/40 underline-offset-2 hover:text-muted-foreground"
         href={PRIVACY_POLICY_URL}

@@ -64,10 +64,16 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
 const DESKTOP_APP_ID = "com.t3tools.t3code";
+// Fork-only distribution that installs beside a normal T3 Code without touching its data or command.
+const ROLES_PREVIEW_APP_ID = "com.t3tools.t3code.rolespreview";
+const ROLES_PREVIEW_PRODUCT_NAME = "T3 Code Roles Preview";
+const ROLES_PREVIEW_LINUX_EXECUTABLE_NAME = "t3code-roles-preview";
+const ROLES_PREVIEW_STARTUP_WM_CLASS = "com.t3tools.T3Code.RolesPreview";
 const APPLE_TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/u;
 
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
 const BuildArch = Schema.Literals(["arm64", "x64", "universal"]);
+const BuildDistribution = Schema.Literals(["roles-preview"]);
 
 const WorkspaceConfig = Schema.Struct({
   catalog: Schema.optional(Schema.Record(Schema.String, Schema.String)),
@@ -180,6 +186,7 @@ interface BuildCliInput {
   readonly platform: Option.Option<typeof BuildPlatform.Type>;
   readonly target: Option.Option<string>;
   readonly arch: Option.Option<typeof BuildArch.Type>;
+  readonly distribution: Option.Option<typeof BuildDistribution.Type>;
   readonly buildVersion: Option.Option<string>;
   readonly outputDir: Option.Option<string>;
   readonly skipBuild: Option.Option<boolean>;
@@ -951,6 +958,7 @@ interface ResolvedBuildOptions {
   readonly platform: typeof BuildPlatform.Type;
   readonly target: string;
   readonly arch: typeof BuildArch.Type;
+  readonly distribution: typeof BuildDistribution.Type | undefined;
   readonly version: string | undefined;
   readonly outputDir: string;
   readonly skipBuild: boolean;
@@ -967,6 +975,7 @@ interface StagePackageJson {
   readonly version: string;
   readonly buildVersion: string;
   readonly t3codeCommitHash: string;
+  readonly t3codeDistribution?: typeof BuildDistribution.Type;
   readonly t3codeWebAuthn?: MacWebAuthnEntitlements;
   readonly private: true;
   readonly packageManager: string;
@@ -1719,6 +1728,7 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
     });
   }
   const version = mergeOptions(input.buildVersion, env.version, undefined);
+  const distribution = Option.getOrUndefined(input.distribution);
   const releaseDir = resolveBooleanFlag(input.mockUpdates, env.mockUpdates)
     ? "release-mock"
     : "release";
@@ -1751,6 +1761,7 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
     platform,
     target,
     arch,
+    distribution,
     version,
     outputDir,
     skipBuild,
@@ -2765,7 +2776,14 @@ export function resolvePackageManagerUserAgent(packageManager: string): string {
   return `${trimmed.slice(0, versionSeparator)}/${trimmed.slice(versionSeparator + 1)}`;
 }
 
-export function resolveDesktopProductName(version: string): string {
+export function resolveDesktopProductName(
+  version: string,
+  distribution?: typeof BuildDistribution.Type,
+): string {
+  if (distribution === "roles-preview") {
+    return ROLES_PREVIEW_PRODUCT_NAME;
+  }
+
   return resolveDesktopUpdateChannel(version) === "nightly"
     ? "T3 Code (Nightly)"
     : (desktopPackageJson.productName ?? "T3 Code");
@@ -2786,12 +2804,16 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     | undefined,
   wslRuntimeBundled = false,
   arch?: typeof BuildArch.Type,
+  distribution?: typeof BuildDistribution.Type,
 ) {
+  const rolesPreview = distribution === "roles-preview";
   const buildConfig: Record<string, unknown> = {
     afterPack: (yield* Path.Path).join(yield* RepoRoot, "scripts/prepare-server-compile-cache.cjs"),
-    appId: DESKTOP_APP_ID,
-    productName: resolveDesktopProductName(version),
-    artifactName: "T3-Code-${version}-${arch}.${ext}",
+    appId: rolesPreview ? ROLES_PREVIEW_APP_ID : DESKTOP_APP_ID,
+    productName: resolveDesktopProductName(version, distribution),
+    artifactName: rolesPreview
+      ? "T3-Code-Roles-Preview-${version}-${arch}.${ext}"
+      : "T3-Code-${version}-${arch}.${ext}",
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
     files: [
       ...DESKTOP_FILE_EXCLUSIONS,
@@ -2880,6 +2902,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         },
       ],
       ...(signed ? { sign: path.join(repoRoot, "scripts/sign-macos.ts") } : {}),
+      // Unsigned bundles read as damaged on Apple silicon; ad-hoc signing lets macOS offer Open Anyway.
+      // Hardened runtime only serves notarization, which ad-hoc builds cannot do, and blocks their library loading.
+      ...(rolesPreview && !signed ? { identity: "-", hardenedRuntime: false } : {}),
       ...(macPasskeySigning
         ? {
             entitlements: macPasskeySigning.entitlementsPath,
@@ -2892,7 +2917,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   if (platform === "mac" && target === "dmg") {
     buildConfig.dmg = {
       // Finder caches DMG backgrounds by volume name; give each installer its own.
-      title: `${resolveDesktopProductName(version)} ${version} Installer`,
+      title: `${resolveDesktopProductName(version, distribution)} ${version} Installer`,
       background: `dmg/dmg-background-${updateChannel}.png`,
       window: {
         width: 640,
@@ -2916,7 +2941,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     buildConfig.afterPack = path.join(repoRoot, "scripts/linux-after-pack.ts");
     buildConfig.linux = {
       target: target === "AppImage" ? [target, "deb"] : [target],
-      executableName: "t3code",
+      executableName: rolesPreview ? ROLES_PREVIEW_LINUX_EXECUTABLE_NAME : "t3code",
       icon: "icons",
       category: "Development",
       synopsis: "Desktop GUI for coding agents",
@@ -2930,18 +2955,23 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       desktop: {
         entry: {
           // Match Electron's WM_CLASS from setDesktopName so docks use this launcher.
-          StartupWMClass: "com.t3tools.T3Code",
+          StartupWMClass: rolesPreview ? ROLES_PREVIEW_STARTUP_WM_CLASS : "com.t3tools.T3Code",
         },
       },
     };
     // electron-updater replaces an installed AppImage in place only when its name has no x.y.z version.
     if (buildConfig.publish) {
       buildConfig.appImage = {
-        artifactName:
-          updateChannel === "nightly" ? "T3-Code-Nightly-${arch}.${ext}" : "T3-Code-${arch}.${ext}",
+        artifactName: rolesPreview
+          ? "T3-Code-Roles-Preview-${arch}.${ext}"
+          : updateChannel === "nightly"
+            ? "T3-Code-Nightly-${arch}.${ext}"
+            : "T3-Code-${arch}.${ext}",
       };
     }
     buildConfig.deb = {
+      // A shared dpkg name would let this package replace the normal install beside it.
+      ...(rolesPreview ? { packageName: ROLES_PREVIEW_LINUX_EXECUTABLE_NAME } : {}),
       // FPM runs outside the staged app directory, so source paths must be absolute.
       fpm: [
         `${path.join(repoRoot, "apps/desktop/resources/linux/com.t3tools.t3code.metainfo.xml")}=/usr/share/metainfo/com.t3tools.t3code.metainfo.xml`,
@@ -3918,6 +3948,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     version: appVersion,
     buildVersion: appVersion,
     t3codeCommitHash: commitHash,
+    ...(options.distribution === undefined ? {} : { t3codeDistribution: options.distribution }),
     // Read by apps/desktop/src/preview/Passkeys.ts; must match the signed entitlements.
     ...(macWebAuthn ? { t3codeWebAuthn: macWebAuthn } : {}),
     private: true,
@@ -3943,6 +3974,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
         : undefined,
       bundlesWslRuntime({ platform: options.platform, runtimeArchivePath: options.wslRuntime }),
       options.arch,
+      options.distribution,
     ),
     dependencies: stageDependencies,
     devDependencies: {
@@ -4104,7 +4136,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
   if (options.platform === "win") {
     yield* validateWindowsPackagedPayload({
       stageDistDir,
-      appExecutableName: `${resolveDesktopProductName(appVersion)}.exe`,
+      appExecutableName: `${resolveDesktopProductName(appVersion, options.distribution)}.exe`,
       targetArch: options.arch,
       appVersion,
       expectWslRuntime: bundlesWslRuntime({
@@ -4203,6 +4235,12 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
   ),
   arch: Flag.Literals("arch", BuildArch.literals).pipe(
     Flag.withDescription("Build arch, for example arm64/x64/universal (env: T3CODE_DESKTOP_ARCH)."),
+    Flag.optional,
+  ),
+  distribution: Flag.Literals("distribution", BuildDistribution.literals).pipe(
+    Flag.withDescription(
+      "Build a fork-only distribution that installs beside a normal T3 Code, for example roles-preview.",
+    ),
     Flag.optional,
   ),
   buildVersion: Flag.String("build-version").pipe(

@@ -1,4 +1,8 @@
 import {
+  type AgentRoleDelegationModePatch,
+  type AgentRoleInstructionDefaults,
+  type AgentRoleInstructionPatch,
+  type AgentRoleModelSelectionPatch,
   ClientSettingsSchema,
   type ClientSettingsPatch,
   type EnvironmentId,
@@ -26,6 +30,7 @@ import * as Equal from "effect/Equal";
 import * as Cause from "effect/Cause";
 import { Atom } from "effect/reactivity";
 
+import { AGENT_ROLE_DELEGATION_MODES_UNSUPPORTED_MESSAGE } from "./roleDelegationModes";
 import type { ResolvedSettingsScope } from "./settingsScope";
 
 export type ScopedSettingsPatch = ServerSettingsPatch & ClientSettingsPatch;
@@ -36,6 +41,8 @@ interface ScopedSettingsEnvironment {
   readonly connection: { readonly phase: EnvironmentConnectionPhase };
   readonly serverConfig: {
     readonly settings: ServerSettings;
+    readonly agentRoleInstructionDefaults?: AgentRoleInstructionDefaults | undefined;
+    readonly supportsAgentRoleDelegationModes?: boolean | undefined;
   } | null;
 }
 
@@ -118,6 +125,74 @@ export function applyPendingScopedWrites<T extends ScopedSettingsEnvironment>(
         : settings;
     return { ...environment, serverConfig: { ...config, settings: projected } };
   });
+}
+
+/** An older eight-role server cannot store the security role; its patch schema drops it. */
+function supportsSecurityRole(
+  environment: Pick<ScopedSettingsEnvironment, "serverConfig">,
+): boolean {
+  return environment.serverConfig?.agentRoleInstructionDefaults?.security !== undefined;
+}
+
+/** Servers before delegation modes dropped the key silently, so they never get one. */
+function supportsDelegationModes(
+  environment: Pick<ScopedSettingsEnvironment, "serverConfig">,
+): boolean {
+  return environment.serverConfig?.supportsAgentRoleDelegationModes === true;
+}
+
+/** Whether every selected destination can store delegation modes; false hides and guards the control. */
+export function scopedDelegationModesSupported(
+  environments: readonly Pick<ScopedSettingsEnvironment, "serverConfig">[],
+): boolean {
+  return environments.length > 0 && environments.every(supportsDelegationModes);
+}
+
+/** Labels of selected destinations that predate roles, whose saves they would drop; empty when all of them support roles. */
+export function scopedRolesUnsupportedLabels(
+  targets: readonly Pick<ScopedSettingsTarget, "environmentId" | "label">[],
+  environments: readonly Pick<ScopedSettingsEnvironment, "environmentId" | "serverConfig">[],
+): readonly string[] {
+  const byId = new Map(environments.map((environment) => [environment.environmentId, environment]));
+  const labels = new Set<string>();
+  for (const target of targets) {
+    const config = byId.get(target.environmentId)?.serverConfig;
+    if (config != null && config.agentRoleInstructionDefaults === undefined) {
+      labels.add(target.label);
+    }
+  }
+  return [...labels];
+}
+
+function withoutKey(value: object, key: string): Record<string, unknown> {
+  const next = { ...value } as Record<string, unknown>;
+  delete next[key];
+  return next;
+}
+
+/** Snapshot servers drop unknown keys, so a destination that cannot store part of a patch gets none of it. */
+function restrictPatchForDestination(
+  patch: ServerSettingsPatch,
+  environment: Pick<ScopedSettingsEnvironment, "serverConfig">,
+): ServerSettingsPatch | null {
+  const securitySupported = supportsSecurityRole(environment);
+  const modesSupported = supportsDelegationModes(environment);
+  if (securitySupported && modesSupported) return patch;
+  const next: Record<string, unknown> = { ...patch };
+  if (!securitySupported) {
+    if (isPlainObject(next.agentRoleModels)) {
+      const roles = withoutKey(next.agentRoleModels, "security");
+      if (Object.keys(roles).length === 0) delete next.agentRoleModels;
+      else next.agentRoleModels = roles;
+    }
+    if (isPlainObject(next.agentRoleInstructions)) {
+      const instructions = withoutKey(next.agentRoleInstructions, "security");
+      if (Object.keys(instructions).length === 0) delete next.agentRoleInstructions;
+      else next.agentRoleInstructions = instructions;
+    }
+  }
+  if (!modesSupported) delete next.agentRoleDelegationModes;
+  return Object.keys(next).length === 0 ? null : (next as ServerSettingsPatch);
 }
 
 /** The representative supplies display values, never the set of write targets. */
@@ -241,14 +316,21 @@ interface ScopedServerWrite {
   readonly previous: ServerSettings;
 }
 
+/**
+ * An update returns `undefined` when a destination has nothing to write, `null`
+ * when the whole override should be removed, and the entry otherwise.
+ */
+type ProjectOverrideUpdate = (
+  current: ProjectSettingsOverrides,
+  settings: ServerSettings,
+  projectId: ProjectId,
+  environment: ScopedSettingsEnvironment,
+) => ProjectSettingsOverrides | null | undefined;
+
 function projectOverrideWrites(
   scope: Extract<ResolvedSettingsScope, { kind: "project" | "checkout" }>,
   environments: readonly ScopedSettingsEnvironment[],
-  update: (
-    current: ProjectSettingsOverrides,
-    settings: ServerSettings,
-    projectId: ProjectId,
-  ) => ProjectSettingsOverrides | null,
+  update: ProjectOverrideUpdate,
 ): ScopedServerWrite[] {
   const byId = new Map(environments.map((environment) => [environment.environmentId, environment]));
   const writes = new Map<EnvironmentId, ScopedServerWrite>();
@@ -258,7 +340,13 @@ function projectOverrideWrites(
       continue;
     }
     const settings = environment.serverConfig.settings;
-    const entry = update(settings.projectSettingsOverrides[member.id] ?? {}, settings, member.id);
+    const entry = update(
+      settings.projectSettingsOverrides[member.id] ?? {},
+      settings,
+      member.id,
+      environment,
+    );
+    if (entry === undefined) continue;
     const existing = writes.get(member.environmentId);
     writes.set(member.environmentId, {
       environmentId: member.environmentId,
@@ -314,97 +402,170 @@ export function planScopedSettingsPatch(
       : isProjectScope
         ? unscopableKeys.length > 0
           ? []
-          : projectOverrideWrites(scope, environments, (current, settings, projectId) => {
-              // Override entries store whole objects; complete partial patches from each target's effective
-              // value.
-              const effective = resolveProjectSettings(settings, projectId).settings;
-              const next: Record<string, unknown> = { ...current };
-              for (const [key, value] of Object.entries<unknown>(serverPatch)) {
-                if (key === "worktreeCleanup" && serverPatch.worktreeCleanup?.mode === "custom") {
-                  next[key] = {
-                    mode: "custom",
-                    rules: {
-                      ...resolveWorktreeCleanup(settings, projectId),
-                      ...serverPatch.worktreeCleanup.rules,
-                    },
-                  };
-                  continue;
+          : projectOverrideWrites(
+              scope,
+              environments,
+              (current, settings, projectId, environment) => {
+                // A role or mode a destination cannot store never reaches it, so
+                // filter the incoming patch and keep whatever that entry already saved.
+                const destinationPatch = restrictPatchForDestination(serverPatch, environment);
+                if (destinationPatch === null) return undefined;
+                // Override entries store whole objects; complete partial patches from each target's effective
+                // value.
+                const effective = resolveProjectSettings(settings, projectId).settings;
+                const next: Record<string, unknown> = { ...current };
+                for (const [key, value] of Object.entries<unknown>(destinationPatch)) {
+                  if (
+                    key === "worktreeCleanup" &&
+                    destinationPatch.worktreeCleanup?.mode === "custom"
+                  ) {
+                    next[key] = {
+                      mode: "custom",
+                      rules: {
+                        ...resolveWorktreeCleanup(settings, projectId),
+                        ...destinationPatch.worktreeCleanup.rules,
+                      },
+                    };
+                    continue;
+                  }
+                  // Roles are sparse: a project override holds only roles set for
+                  // this project, so untouched roles keep inheriting the environment.
+                  if (key === "agentRoleModels") {
+                    const roles: Record<string, unknown> = isPlainObject(current.agentRoleModels)
+                      ? { ...current.agentRoleModels }
+                      : {};
+                    for (const [role, selection] of Object.entries(
+                      value as AgentRoleModelSelectionPatch,
+                    )) {
+                      if (selection === null) delete roles[role];
+                      else if (selection !== undefined) roles[role] = selection;
+                    }
+                    if (Object.keys(roles).length === 0) delete next.agentRoleModels;
+                    else next.agentRoleModels = roles;
+                    continue;
+                  }
+                  // Delegation modes are sparse too; a null patch returns one role to
+                  // the environment and unknown role keys keep round-tripping.
+                  if (key === "agentRoleDelegationModes") {
+                    const roles: Record<string, unknown> = isPlainObject(
+                      current.agentRoleDelegationModes,
+                    )
+                      ? { ...current.agentRoleDelegationModes }
+                      : {};
+                    for (const [role, mode] of Object.entries(
+                      value as AgentRoleDelegationModePatch,
+                    )) {
+                      if (mode === null) delete roles[role];
+                      else if (mode !== undefined) roles[role] = mode;
+                    }
+                    if (Object.keys(roles).length === 0) delete next.agentRoleDelegationModes;
+                    else next.agentRoleDelegationModes = roles;
+                    continue;
+                  }
+                  if (key === "agentRoleInstructions") {
+                    const roles: Record<string, unknown> = isPlainObject(
+                      current.agentRoleInstructions,
+                    )
+                      ? { ...current.agentRoleInstructions }
+                      : {};
+                    for (const [role, text] of Object.entries(value as AgentRoleInstructionPatch)) {
+                      if (text === null) delete roles[role];
+                      else if (text !== undefined) roles[role] = text;
+                    }
+                    if (Object.keys(roles).length === 0) delete next.agentRoleInstructions;
+                    else next.agentRoleInstructions = roles;
+                    continue;
+                  }
+                  // Inherit sends null; remove overrides whose keys cannot store null.
+                  if (
+                    value === null &&
+                    !isNullableProjectSettingsOverride(key as ProjectScopedServerSettingKey)
+                  ) {
+                    delete next[key];
+                    continue;
+                  }
+                  const base: unknown = effective[key as keyof ServerSettings];
+                  // A new model must not inherit the previous model's options.
+                  if (
+                    isPlainObject(value) &&
+                    isPlainObject(base) &&
+                    (key === "defaultModelSelection" ||
+                      key === "sourceControlWriterModelSelection" ||
+                      key === "reviewGuideModelSelection" ||
+                      key === "textGenerationModelSelection") &&
+                    (value.instanceId !== undefined || value.model !== undefined)
+                  ) {
+                    next[key] = { instanceId: base.instanceId, model: base.model, ...value };
+                    continue;
+                  }
+                  next[key] =
+                    isPlainObject(value) && isPlainObject(base) ? { ...base, ...value } : value;
                 }
-                // Inherit sends null; remove overrides whose keys cannot store null.
-                if (
-                  value === null &&
-                  !isNullableProjectSettingsOverride(key as ProjectScopedServerSettingKey)
-                ) {
-                  delete next[key];
-                  continue;
-                }
-                const base: unknown = effective[key as keyof ServerSettings];
-                // A new model must not inherit the previous model's options.
-                if (
-                  isPlainObject(value) &&
-                  isPlainObject(base) &&
-                  (key === "defaultModelSelection" ||
-                    key === "sourceControlWriterModelSelection" ||
-                    key === "reviewGuideModelSelection" ||
-                    key === "textGenerationModelSelection") &&
-                  (value.instanceId !== undefined || value.model !== undefined)
-                ) {
-                  next[key] = { instanceId: base.instanceId, model: base.model, ...value };
-                  continue;
-                }
-                next[key] =
-                  isPlainObject(value) && isPlainObject(base) ? { ...base, ...value } : value;
-              }
-              return next as ProjectSettingsOverrides;
-            })
+                return next as ProjectSettingsOverrides;
+              },
+            )
         : scope.kind === "all" || scope.kind === "environment"
           ? connectedEnvironments.flatMap((environment) => {
               const previous = environment.serverConfig?.settings;
               if (!previous) return [];
-              return [
-                {
-                  environmentId: environment.environmentId,
-                  label: environment.label,
-                  previous,
-                  patch: forDestination(
-                    previous,
-                    previous.worktreeCleanup != null &&
-                      serverPatch.storageCleanup &&
-                      Object.keys(serverPatch.storageCleanup).some((key) =>
-                        key.startsWith("worktree"),
-                      )
-                      ? {
-                          ...serverPatch,
-                          worktreeCleanup: {
-                            mode: "custom",
-                            rules: {
-                              ...resolveWorktreeCleanup(previous, null),
-                              ...Object.fromEntries(
-                                Object.entries(serverPatch.storageCleanup).filter(([key]) =>
-                                  key.startsWith("worktree"),
-                                ),
-                              ),
-                            },
-                          },
-                        }
-                      : serverPatch,
-                  ),
-                },
-              ];
+              const destinationPatch = forDestination(
+                previous,
+                previous.worktreeCleanup != null &&
+                  serverPatch.storageCleanup &&
+                  Object.keys(serverPatch.storageCleanup).some((key) => key.startsWith("worktree"))
+                  ? {
+                      ...serverPatch,
+                      worktreeCleanup: {
+                        mode: "custom",
+                        rules: {
+                          ...resolveWorktreeCleanup(previous, null),
+                          ...Object.fromEntries(
+                            Object.entries(serverPatch.storageCleanup).filter(([key]) =>
+                              key.startsWith("worktree"),
+                            ),
+                          ),
+                        },
+                      },
+                    }
+                  : serverPatch,
+              );
+              const patch = restrictPatchForDestination(destinationPatch, environment);
+              return patch === null
+                ? []
+                : [
+                    {
+                      environmentId: environment.environmentId,
+                      label: environment.label,
+                      previous,
+                      patch,
+                    },
+                  ];
             })
           : [];
   const hasClientWrite = Object.keys(clientPatch).length > 0;
   const hasWrite = hasClientWrite || serverWrites.length > 0;
+  const securityRequested =
+    serverPatch.agentRoleModels?.security !== undefined ||
+    serverPatch.agentRoleInstructions?.security !== undefined;
+  const delegationModesRequested = serverPatch.agentRoleDelegationModes !== undefined;
+  const delegationModesUnavailable =
+    delegationModesRequested &&
+    connectedEnvironments.length > 0 &&
+    connectedEnvironments.every((environment) => !supportsDelegationModes(environment));
   const unavailableReason =
     hasWrite || Object.keys(patch).length === 0
       ? null
       : scope.kind === "unavailable"
         ? scope.message
-        : unscopableKeys.length > 0
-          ? "This setting is environment-wide and cannot be overridden by a project."
-          : isProjectScope
-            ? "Connect the selected checkouts, or update their environments, to save a project override."
-            : `Connect ${scope.kind === "environment" ? scope.label : "an environment"} to save this setting.`;
+        : securityRequested
+          ? "Security roles need a server that advertises them. Update T3 Code on it."
+          : delegationModesUnavailable
+            ? AGENT_ROLE_DELEGATION_MODES_UNSUPPORTED_MESSAGE
+            : unscopableKeys.length > 0
+              ? "This setting is environment-wide and cannot be overridden by a project."
+              : isProjectScope
+                ? "Connect the selected checkouts, or update their environments, to save a project override."
+                : `Connect ${scope.kind === "environment" ? scope.label : "an environment"} to save this setting.`;
   return { clientPatch, hasClientWrite, serverWrites, unavailableReason };
 }
 

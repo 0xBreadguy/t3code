@@ -7,6 +7,7 @@ import {
   CommandId,
   ContextHandoffId,
   ContextTransferId,
+  EnvironmentId,
   GitCommandError,
   MessageId,
   NodeId,
@@ -92,11 +93,14 @@ const normalize = (target: string) => {
   }
   return `/${parts.join("/")}`;
 };
-const layerWorktreeLocation = (worktreesDir = managedWorktreesDir) =>
+const layerWorktreeLocation = (
+  worktreesDir = managedWorktreesDir,
+  settings: Parameters<typeof ServerSettings.layerTest>[0] = {},
+) =>
   Layer.mergeAll(
     Path.layer,
     Layer.mock(ServerConfig.ServerConfig)({ worktreesDir } as ServerConfig.ServerConfig["Service"]),
-    ServerSettings.layerTest(),
+    ServerSettings.layerTest(settings),
   );
 
 function startWithMissingWorktree(
@@ -398,6 +402,7 @@ function makeLocalCommandHarness(input: {
   readonly worktreePath?: string;
   readonly worktreesDir?: string;
   readonly workspaceRoot?: string;
+  readonly settings?: Parameters<typeof ServerSettings.layerTest>[0];
   readonly gitWorkflow?: GitWorkflow.GitWorkflowService["Service"];
   readonly fileSystem?: FileSystem.FileSystem;
   readonly previousNativeSession?: boolean;
@@ -407,6 +412,8 @@ function makeLocalCommandHarness(input: {
   readonly ensureThreadFailure?: unknown;
   readonly historyReadFailureAfterFallback?: unknown;
   readonly resumeFailure?: ProviderAdapter.ProviderAdapterV2Error;
+  readonly sessionForTurn?: boolean;
+  readonly threadKind?: "delegated" | "remote-delegated" | "native-subagent" | "fork";
   readonly interruptOpen?: boolean;
   readonly interruptRunBeforeOpenFailure?: boolean;
   readonly writeFailure?: unknown;
@@ -510,7 +517,28 @@ function makeLocalCommandHarness(input: {
       projectId: ProjectId.make("project-native-account-command"),
       branch: input.worktreePath === undefined ? null : "feature/restore",
       worktreePath: input.worktreePath ?? null,
-      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+      lineage: {
+        parentThreadId:
+          input.threadKind !== undefined && input.threadKind !== "remote-delegated"
+            ? ThreadId.make("thread-parent")
+            : null,
+        relationshipToParent:
+          input.threadKind === "delegated" || input.threadKind === "native-subagent"
+            ? "subagent"
+            : input.threadKind === "fork"
+              ? "fork"
+              : null,
+        rootThreadId: threadId,
+      },
+      creationSource: input.threadKind === "native-subagent" ? "provider" : "web",
+      delegatedFrom:
+        input.threadKind === "remote-delegated"
+          ? {
+              environmentId: EnvironmentId.make("environment-parent"),
+              threadId: ThreadId.make("thread-parent"),
+              title: "Parent",
+            }
+          : undefined,
     } as OrchestrationV2ThreadProjection["thread"],
     runs: [
       ...(input.previousNativeSession
@@ -1106,12 +1134,15 @@ function makeLocalCommandHarness(input: {
                     ),
                   ),
                 )
-              : input.failReadsAfterRunning === true || input.previousTurn !== undefined
+              : input.failReadsAfterRunning === true ||
+                  input.previousTurn !== undefined ||
+                  input.sessionForTurn === true
                 ? Effect.succeed({
                     driver: providerThread.driver,
                     providerSession,
                     ensureThread: () => Effect.succeed(providerThread),
                     resumeThread: () => Effect.succeed(projection.providerThreads[0]),
+                    startTurn,
                   } as never)
                 : Effect.die("A local command must not open a native session."),
   );
@@ -1128,7 +1159,9 @@ function makeLocalCommandHarness(input: {
             } as never)
           : runInput.session.startTurn(runInput as never)
         ).pipe(Effect.orDie)
-      : input.failReadsAfterRunning === true || input.previousTurn !== undefined
+      : input.failReadsAfterRunning === true ||
+          input.previousTurn !== undefined ||
+          input.sessionForTurn === true
         ? Effect.suspend(() =>
             providerBusy ? Effect.die("The previous provider turn is still running.") : Effect.void,
           )
@@ -1256,7 +1289,7 @@ function makeLocalCommandHarness(input: {
         }),
         IdAllocator.layer,
         Layer.mock(TurnItemPositionStore.TurnItemPositionStoreV2)({}),
-        layerWorktreeLocation(input.worktreesDir),
+        layerWorktreeLocation(input.worktreesDir, input.settings),
         input.fileSystem === undefined
           ? FileSystem.layerNoop({ exists: () => Effect.succeed(true) })
           : Layer.succeed(FileSystem.FileSystem, input.fileSystem),
@@ -2722,6 +2755,159 @@ effectIt.effect("fails a starting run when its recovery state cannot be read", (
     expect(projection.nodes[0]).toMatchObject({ status: "failed", startedAt: null });
     expect(projection.turnItems).toMatchObject([{ type: "error", status: "failed" }]);
   }),
+);
+
+effectIt.effect("gives an ordinary parent this project's role catalog with managed routing", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project-native-account-command");
+    const otherProjectId = ProjectId.make("project-other");
+    const design = {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "claude-sonnet-5-5",
+      options: [{ id: "effort", value: "xhigh" }],
+    };
+    const harness = makeLocalCommandHarness({
+      text: "Review the checkout screen for visual and interaction quality.",
+      sessionForTurn: true,
+      settings: {
+        agentRoleModels: {
+          implementation: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-6-sol",
+          },
+        },
+        projectSettingsOverrides: {
+          [projectId]: {
+            agentRoleModels: { design },
+            agentRoleInstructions: { design: "Hold the visual bar." },
+          },
+          [otherProjectId]: {
+            agentRoleModels: {
+              design: {
+                instanceId: ProviderInstanceId.make("codex"),
+                model: "other-project-model",
+              },
+            },
+          },
+        },
+      },
+    });
+    harness.startRootRun.mockImplementation((input) =>
+      input.session
+        .startTurn({
+          message: {
+            text: "Review the checkout screen for visual and interaction quality.",
+            attachments: [],
+          },
+        } as never)
+        .pipe(Effect.orDie),
+    );
+
+    yield* harness.start;
+
+    expect(harness.startTurn).toHaveBeenCalledOnce();
+    const text = harness.startTurn.mock.calls[0]?.[0].message.text ?? "";
+    expect(text).toContain("## Role delegation");
+    expect(text).toContain("check the configured roles below");
+    expect(text).toContain("a native subagent cannot");
+    expect(text).toContain("UI, interaction, visual, motion, and design-quality work or audits.");
+    expect(text).toContain(
+      "claudeAgent/claude-sonnet-5-5, options effort=xhigh (project override)",
+    );
+    expect(text).toContain("codex/gpt-6-sol (environment default)");
+    expect(text).toContain("custom role instructions");
+    expect(text).not.toContain("other-project-model");
+    expect(text).not.toContain("Hold the visual bar.");
+    expect(text).not.toContain("Treat this as a showreel");
+    expect(text).toContain("User message:\nReview the checkout screen");
+  }),
+);
+
+effectIt.effect.each([undefined, "fork"] as const)(
+  "leaves an untouched project's listed thread in its ordinary shape: %s",
+  (threadKind) =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({
+        text: "Continue",
+        sessionForTurn: true,
+        ...(threadKind === undefined ? {} : { threadKind }),
+      });
+      harness.startRootRun.mockImplementation((input) =>
+        input.session
+          .startTurn({
+            message: { text: "Continue", attachments: [] },
+          } as never)
+          .pipe(Effect.orDie),
+      );
+
+      yield* harness.start;
+
+      const text = harness.startTurn.mock.calls[0]?.[0].message.text ?? "";
+      expect(text).not.toContain("## Role delegation");
+      expect(text).toBe("Continue");
+    }),
+);
+
+effectIt.effect.each([undefined, "fork"] as const)(
+  "gives a configured project's listed thread the role catalog: %s",
+  (threadKind) =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({
+        text: "Fix the failing test.",
+        sessionForTurn: true,
+        ...(threadKind === undefined ? {} : { threadKind }),
+        settings: {
+          agentRoleModels: {
+            implementation: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6-sol" },
+          },
+        },
+      });
+      harness.startRootRun.mockImplementation((input) =>
+        input.session
+          .startTurn({
+            message: { text: "Fix the failing test.", attachments: [] },
+          } as never)
+          .pipe(Effect.orDie),
+      );
+
+      yield* harness.start;
+
+      const text = harness.startTurn.mock.calls[0]?.[0].message.text ?? "";
+      expect(text).toContain("## Role delegation");
+      expect(text).toContain("`implementation`: Production code changes, fixes, and refactors.");
+      expect(text).toContain("codex/gpt-6-sol (environment default)");
+      expect(text).toContain("User message:\nFix the failing test.");
+    }),
+);
+
+effectIt.effect.each(["delegated", "remote-delegated", "native-subagent"] as const)(
+  "leaves the role catalog out of a child's prompt: %s",
+  (threadKind) =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({
+        text: "Fix the failing test.",
+        sessionForTurn: true,
+        threadKind,
+        settings: {
+          agentRoleModels: {
+            implementation: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6-sol" },
+          },
+        },
+      });
+      harness.startRootRun.mockImplementation((input) =>
+        input.session
+          .startTurn({
+            message: { text: "Fix the failing test.", attachments: [] },
+          } as never)
+          .pipe(Effect.orDie),
+      );
+
+      yield* harness.start;
+
+      const text = harness.startTurn.mock.calls[0]?.[0].message.text ?? "";
+      expect(text).not.toContain("## Role delegation");
+      expect(text).toBe("Fix the failing test.");
+    }),
 );
 
 effectIt.effect("terminalizes a starting run when its provider session cannot open", () =>

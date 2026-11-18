@@ -13,6 +13,7 @@ import * as Cause from "effect/Cause";
 import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
+import { AGENT_ROLE_DELEGATION_MODES_UNSUPPORTED_MESSAGE } from "./roleDelegationModes";
 import {
   applyPendingScopedWrites,
   createScopedSettingsWriter,
@@ -22,6 +23,7 @@ import {
   planScopedSettingsPatch,
   scopedIdleCompaction,
   resolveScopedSettingsTargets,
+  scopedRolesUnsupportedLabels,
   scopedSettingsAreMixed,
   scopedSettingsSource,
   selectScopedSettingsEnvironments,
@@ -30,12 +32,27 @@ import {
 } from "./scopedSettings";
 import { resolveSettingsScope } from "./settingsScope";
 
+function agentRoleDefaults(security?: string) {
+  return {
+    architecture: "Architecture",
+    implementation: "Implementation",
+    research: "Research",
+    review: "Review",
+    design: "Design",
+    test: "Test",
+    general: "General",
+    ...(security === undefined ? {} : { security }),
+  };
+}
+
 function environment(
   id: string,
   options: {
     connected?: boolean;
     loaded?: boolean;
     settings?: Partial<ServerSettings>;
+    agentRoleInstructionDefaults?: ReturnType<typeof agentRoleDefaults>;
+    supportsAgentRoleDelegationModes?: boolean;
   } = {},
 ) {
   return {
@@ -49,6 +66,12 @@ function environment(
         ? null
         : {
             settings: { ...DEFAULT_SERVER_SETTINGS, ...options.settings },
+            ...(options.agentRoleInstructionDefaults === undefined
+              ? {}
+              : { agentRoleInstructionDefaults: options.agentRoleInstructionDefaults }),
+            ...(options.supportsAgentRoleDelegationModes === undefined
+              ? {}
+              : { supportsAgentRoleDelegationModes: options.supportsAgentRoleDelegationModes }),
           },
   };
 }
@@ -143,6 +166,41 @@ describe("scoped settings targets", () => {
     expect(scopedSettingsSource([targets[0]!], ["defaultAutoPull"])).toBe("project");
     expect(scopedSettingsSource(targets, ["enableProviderUpdateChecks"])).toBe("environment");
     expect(scopedSettingsAreMixed(targets, ["defaultAutoPull"])).toBe(true);
+  });
+});
+
+describe("role support across selected targets", () => {
+  function unsupportedLabels(selected: ReadonlyArray<ReturnType<typeof environment>>) {
+    return scopedRolesUnsupportedLabels(
+      resolveScopedSettingsTargets(resolveSettingsScope({}, [], selected), selected),
+      selected,
+    );
+  }
+
+  it("supports roles on servers that advertise them, with or without the security role", () => {
+    const roles = environment("Modern", {
+      agentRoleInstructionDefaults: agentRoleDefaults("Security text."),
+    });
+    const eightRole = environment("Earlier", {
+      agentRoleInstructionDefaults: agentRoleDefaults(),
+    });
+    expect(unsupportedLabels([roles])).toEqual([]);
+    expect(unsupportedLabels([eightRole])).toEqual([]);
+  });
+
+  it("names an environment whose loaded server config has no role settings", () => {
+    expect(unsupportedLabels([environment("Older")])).toEqual(["Older"]);
+  });
+
+  it("names only the older environment in a mixed scope", () => {
+    const roles = environment("Modern", {
+      agentRoleInstructionDefaults: agentRoleDefaults("Security text."),
+    });
+    expect(unsupportedLabels([roles, environment("Older")])).toEqual(["Older"]);
+  });
+
+  it("does not name an environment whose server config has not loaded", () => {
+    expect(unsupportedLabels([environment("Connecting", { loaded: false })])).toEqual([]);
   });
 });
 
@@ -377,6 +435,361 @@ describe("scoped settings writes", () => {
       planScopedSettingsPatch(checkout, [laptop, server], { defaultAutoPull: true }),
     ).toMatchObject({
       serverWrites: [{ environmentId: server.environmentId }],
+    });
+  });
+
+  it("merges project role overrides per role and leaves inherited roles out of the entry", () => {
+    const claude = ProviderInstanceId.make("claudeAgent");
+    const architecture = { instanceId: claude, model: "opus-5" };
+    const review = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6-sol" };
+    const implementation = { instanceId: claude, model: "sonnet-5" };
+    const withRoles = environment("Server", {
+      settings: {
+        agentRoleModels: { architecture },
+        projectSettingsOverrides: { [projectId]: { agentRoleModels: { review } } },
+      },
+    });
+    const plan = planScopedSettingsPatch(project, [withRoles], {
+      agentRoleModels: { implementation },
+    });
+    expect(plan.serverWrites).toHaveLength(1);
+    expect(plan.serverWrites[0]?.patch).toEqual({
+      projectSettingsOverrides: {
+        [projectId]: { agentRoleModels: { review, implementation } },
+      },
+    });
+    expect(
+      planScopedSettingsPatch(project, [withRoles], {
+        agentRoleModels: { review: null },
+      }).serverWrites[0]?.patch,
+    ).toEqual({
+      projectSettingsOverrides: { [projectId]: {} },
+    });
+    expect(
+      planScopedSettingsPatch(project, [withRoles], {
+        agentRoleModels: { review: { instanceId: claude, model: "opus-5" } },
+      }).serverWrites[0]?.patch,
+    ).toEqual({
+      projectSettingsOverrides: {
+        [projectId]: {
+          agentRoleModels: { review: { instanceId: claude, model: "opus-5" } },
+        },
+      },
+    });
+  });
+
+  it("merges project delegation-mode overrides per role and preserves unknown roles", () => {
+    const withModes = environment("Server", {
+      supportsAgentRoleDelegationModes: true,
+      settings: {
+        agentRoleDelegationModes: { review: "always", futureRole: "always" },
+        projectSettingsOverrides: {
+          [projectId]: {
+            agentRoleDelegationModes: { implementation: "always", futureRole: "prefer" },
+          },
+        },
+      },
+    });
+    expect(
+      planScopedSettingsPatch(project, [withModes], {
+        agentRoleDelegationModes: { review: "always" },
+      }).serverWrites[0]?.patch,
+    ).toEqual({
+      projectSettingsOverrides: {
+        [projectId]: {
+          agentRoleDelegationModes: {
+            implementation: "always",
+            futureRole: "prefer",
+            review: "always",
+          },
+        },
+      },
+    });
+    expect(
+      planScopedSettingsPatch(project, [withModes], {
+        agentRoleDelegationModes: { implementation: null },
+      }).serverWrites[0]?.patch,
+    ).toEqual({
+      projectSettingsOverrides: {
+        [projectId]: { agentRoleDelegationModes: { futureRole: "prefer" } },
+      },
+    });
+
+    const onlyRole = environment("Server", {
+      supportsAgentRoleDelegationModes: true,
+      settings: {
+        projectSettingsOverrides: {
+          [projectId]: { agentRoleDelegationModes: { implementation: "always" } },
+        },
+      },
+    });
+    expect(
+      planScopedSettingsPatch(project, [onlyRole], {
+        agentRoleDelegationModes: { implementation: null },
+      }).serverWrites[0]?.patch,
+    ).toEqual({ projectSettingsOverrides: { [projectId]: {} } });
+  });
+
+  it("sends delegation modes only to environments that advertise support", () => {
+    const modern = environment("Modern", { supportsAgentRoleDelegationModes: true });
+    const legacy = environment("Legacy");
+    const patch = { agentRoleDelegationModes: { review: "always" as const } };
+
+    const envPlan = planScopedSettingsPatch(
+      resolveSettingsScope({}, [], [modern, legacy]),
+      [modern, legacy],
+      patch,
+    );
+    expect(envPlan.serverWrites.map(({ environmentId }) => environmentId)).toEqual([
+      modern.environmentId,
+    ]);
+    expect(envPlan.serverWrites[0]?.patch).toEqual(patch);
+    expect(
+      planScopedSettingsPatch(resolveSettingsScope({}, [], [legacy]), [legacy], patch),
+    ).toMatchObject({
+      serverWrites: [],
+      unavailableReason: AGENT_ROLE_DELEGATION_MODES_UNSUPPORTED_MESSAGE,
+    });
+
+    const projectPlan = planScopedSettingsPatch(
+      project,
+      [environment("Server", { supportsAgentRoleDelegationModes: true }), environment("Laptop")],
+      patch,
+    );
+    expect(projectPlan.serverWrites).toEqual([
+      {
+        environmentId: server.environmentId,
+        label: server.label,
+        previous: expect.anything(),
+        patch: {
+          projectSettingsOverrides: {
+            [projectId]: { agentRoleDelegationModes: { review: "always" } },
+          },
+        },
+      },
+    ]);
+  });
+
+  it("sends the security role only to environments that advertise it", () => {
+    const claude = ProviderInstanceId.make("claudeAgent");
+    const security = { instanceId: claude, model: "security-model" };
+    const review = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6-sol" };
+    const modern = environment("Modern", {
+      agentRoleInstructionDefaults: agentRoleDefaults("Security text."),
+    });
+    const legacy = environment("Legacy", {
+      agentRoleInstructionDefaults: agentRoleDefaults(),
+    });
+    const scope = resolveSettingsScope({}, [], [modern, legacy]);
+
+    const plan = planScopedSettingsPatch(scope, [modern, legacy], {
+      agentRoleModels: { security, review },
+      agentRoleInstructions: { security: "Audit hard." },
+    });
+    expect(plan.unavailableReason).toBeNull();
+    expect(plan.serverWrites.map(({ environmentId }) => environmentId)).toEqual([
+      modern.environmentId,
+      legacy.environmentId,
+    ]);
+    expect(plan.serverWrites[0]?.patch).toEqual({
+      agentRoleModels: { security, review },
+      agentRoleInstructions: { security: "Audit hard." },
+    });
+    expect(plan.serverWrites[1]?.patch).toEqual({ agentRoleModels: { review } });
+
+    const legacyOnly = planScopedSettingsPatch(resolveSettingsScope({}, [], [legacy]), [legacy], {
+      agentRoleModels: { security },
+    });
+    expect(legacyOnly.serverWrites).toEqual([]);
+    expect(legacyOnly.unavailableReason).toBe(
+      "Security roles need a server that advertises them. Update T3 Code on it.",
+    );
+  });
+
+  it("keeps a project security override off a destination that cannot store it", () => {
+    const claude = ProviderInstanceId.make("claudeAgent");
+    const security = { instanceId: claude, model: "security-model" };
+    const modernLaptop = environment("Laptop", {
+      agentRoleInstructionDefaults: agentRoleDefaults("Security text."),
+    });
+    const legacyServer = environment("Server", {
+      agentRoleInstructionDefaults: agentRoleDefaults(),
+    });
+    const plan = planScopedSettingsPatch(project, [modernLaptop, legacyServer], {
+      agentRoleModels: { security },
+    });
+    expect(plan.serverWrites).toHaveLength(1);
+    expect(plan.serverWrites[0]?.environmentId).toBe(laptop.environmentId);
+    expect(plan.serverWrites[0]?.patch).toEqual({
+      projectSettingsOverrides: {
+        [laptopProjectId]: { agentRoleModels: { security } },
+      },
+    });
+  });
+
+  it("preserves a saved project security role when editing an unrelated project setting", () => {
+    const claude = ProviderInstanceId.make("claudeAgent");
+    const savedSecurity = { instanceId: claude, model: "saved-security-model" };
+    const legacy = environment("Server", {
+      agentRoleInstructionDefaults: agentRoleDefaults(),
+      settings: {
+        projectSettingsOverrides: {
+          [projectId]: {
+            agentRoleModels: { security: savedSecurity },
+            agentRoleInstructions: { security: "Saved security instructions." },
+          },
+        },
+      },
+    });
+    const plan = planScopedSettingsPatch(project, [legacy], {
+      agentRoleInstructions: { review: "New review instructions" },
+    });
+    expect(plan.serverWrites).toHaveLength(1);
+    const persisted = applyServerSettingsPatch(
+      legacy.serverConfig!.settings,
+      plan.serverWrites[0]!.patch,
+    );
+    expect(persisted.projectSettingsOverrides[projectId]).toEqual({
+      agentRoleModels: { security: savedSecurity },
+      agentRoleInstructions: {
+        security: "Saved security instructions.",
+        review: "New review instructions",
+      },
+    });
+  });
+
+  it("preserves a saved project security role when clearing another override", () => {
+    const claude = ProviderInstanceId.make("claudeAgent");
+    const savedSecurity = { instanceId: claude, model: "saved-security-model" };
+    const legacy = environment("Server", {
+      agentRoleInstructionDefaults: agentRoleDefaults(),
+      settings: {
+        projectSettingsOverrides: {
+          [projectId]: {
+            defaultAutoPull: true,
+            agentRoleModels: { security: savedSecurity },
+            agentRoleInstructions: { security: "Saved security instructions." },
+          },
+        },
+      },
+    });
+    const plan = planScopedSettingsClear(checkout, [legacy], ["defaultAutoPull"]);
+    expect(plan.serverWrites).toHaveLength(1);
+    const persisted = applyServerSettingsPatch(
+      legacy.serverConfig!.settings,
+      plan.serverWrites[0]!.patch,
+    );
+    expect(persisted.projectSettingsOverrides[projectId]).toEqual({
+      agentRoleModels: { security: savedSecurity },
+      agentRoleInstructions: { security: "Saved security instructions." },
+    });
+  });
+
+  it("sends no write for an unsupported security-only project patch over a populated entry", () => {
+    const claude = ProviderInstanceId.make("claudeAgent");
+    const legacy = environment("Server", {
+      agentRoleInstructionDefaults: agentRoleDefaults(),
+      settings: {
+        projectSettingsOverrides: {
+          [projectId]: {
+            defaultAutoPull: true,
+            agentRoleInstructions: { review: "Existing review instructions." },
+          },
+        },
+      },
+    });
+    const plan = planScopedSettingsPatch(project, [legacy], {
+      agentRoleModels: { security: { instanceId: claude, model: "new-security-model" } },
+    });
+    expect(plan.serverWrites).toEqual([]);
+    expect(plan.unavailableReason).toBe(
+      "Security roles need a server that advertises them. Update T3 Code on it.",
+    );
+  });
+
+  it("applies the supported part of a mixed patch without deleting a saved security role", () => {
+    const claude = ProviderInstanceId.make("claudeAgent");
+    const codex = ProviderInstanceId.make("codex");
+    const savedSecurity = { instanceId: claude, model: "saved-security-model" };
+    const review = { instanceId: codex, model: "gpt-6-sol" };
+    const legacy = environment("Server", {
+      agentRoleInstructionDefaults: agentRoleDefaults(),
+      settings: {
+        projectSettingsOverrides: {
+          [projectId]: {
+            agentRoleModels: { security: savedSecurity },
+            agentRoleInstructions: { security: "Saved security instructions." },
+          },
+        },
+      },
+    });
+    const plan = planScopedSettingsPatch(project, [legacy], {
+      agentRoleModels: {
+        security: { instanceId: claude, model: "new-security-model" },
+        review,
+      },
+    });
+    expect(plan.serverWrites).toHaveLength(1);
+    const persisted = applyServerSettingsPatch(
+      legacy.serverConfig!.settings,
+      plan.serverWrites[0]!.patch,
+    );
+    expect(persisted.projectSettingsOverrides[projectId]).toEqual({
+      agentRoleModels: { security: savedSecurity, review },
+      agentRoleInstructions: { security: "Saved security instructions." },
+    });
+  });
+
+  it("merges project instruction overrides per role and keeps models separate", () => {
+    const claude = ProviderInstanceId.make("claudeAgent");
+    const architecture = { instanceId: claude, model: "opus-5" };
+    const withRoles = environment("Server", {
+      settings: {
+        agentRoleModels: { architecture },
+        agentRoleInstructions: { architecture: "Environment architecture." },
+        projectSettingsOverrides: {
+          [projectId]: {
+            agentRoleModels: { architecture },
+            agentRoleInstructions: { review: "Project review." },
+          },
+        },
+      },
+    });
+    expect(
+      planScopedSettingsPatch(project, [withRoles], {
+        agentRoleInstructions: { architecture: "New architecture text.\n" },
+      }).serverWrites[0]?.patch,
+    ).toEqual({
+      projectSettingsOverrides: {
+        [projectId]: {
+          agentRoleModels: { architecture },
+          agentRoleInstructions: {
+            review: "Project review.",
+            architecture: "New architecture text.\n",
+          },
+        },
+      },
+    });
+    expect(
+      planScopedSettingsPatch(project, [withRoles], {
+        agentRoleInstructions: { review: null },
+      }).serverWrites[0]?.patch,
+    ).toEqual({
+      projectSettingsOverrides: {
+        [projectId]: { agentRoleModels: { architecture } },
+      },
+    });
+    expect(
+      planScopedSettingsPatch(project, [withRoles], {
+        agentRoleInstructions: { review: "" },
+      }).serverWrites[0]?.patch,
+    ).toEqual({
+      projectSettingsOverrides: {
+        [projectId]: {
+          agentRoleModels: { architecture },
+          agentRoleInstructions: { review: "" },
+        },
+      },
     });
   });
 

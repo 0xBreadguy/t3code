@@ -44,15 +44,25 @@ describe("Codex runtime context", () => {
 });
 
 describe("Codex orchestration context", () => {
-  it("routes subagents native first, delegate_task for the rest", () => {
+  it("routes cataloged subagent work through delegate_task", () => {
     const orchestration = Object.entries(buildCodexAdditionalContext({ model: "gpt-6.1-sol" }))
       .filter(([key]) => key.startsWith("t3_code_orchestration_"))
       .map(([, entry]) => entry.value)
       .join("\n");
 
-    NodeAssert.ok(orchestration.includes("use your native tool when the child uses your provider"));
+    NodeAssert.ok(orchestration.includes("check its roles before choosing direct work"));
+    NodeAssert.ok(orchestration.includes("then apply its mode"));
+    NodeAssert.ok(orchestration.includes("`always` takes actual matching work"));
+    NodeAssert.ok(orchestration.includes("`prefer` leaves small, direct work to your judgment"));
+    NodeAssert.ok(
+      orchestration.includes("With no catalog, or work no role takes, use your native tool"),
+    );
+    NodeAssert.ok(orchestration.includes("a native type on another provider's model counts too"));
+    NodeAssert.ok(orchestration.includes("a child never delegates again automatically"));
+    NodeAssert.ok(orchestration.includes("As a subagent or child, do the work yourself"));
+    NodeAssert.ok(orchestration.includes("do the work here when asked for direct work"));
+    NodeAssert.ok(orchestration.includes("a request for native tooling uses a native tool"));
     NodeAssert.ok(orchestration.includes("`run_in_background:false`"));
-    NodeAssert.ok(orchestration.includes("A native type on another provider's model"));
     NodeAssert.ok(
       orchestration.includes("Background agent: `delegate_task`, never a background `Agent`."),
     );

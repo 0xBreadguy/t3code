@@ -176,6 +176,19 @@ describe("DesktopAppIdentity", () => {
     ),
   );
 
+  it.effect("keeps a roles-preview profile apart from the normal install", () =>
+    withIdentity(
+      Effect.gen(function* () {
+        const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
+        assert.equal(
+          yield* identity.resolveUserDataPath,
+          "/Users/alice/Library/Application Support/t3code-roles-preview",
+        );
+      }),
+      { legacyPathExists: true, environment: { distribution: "roles-preview" } },
+    ),
+  );
+
   it.effect.each([
     { stage: "Beta", environment: {} },
     {
@@ -185,6 +198,10 @@ describe("DesktopAppIdentity", () => {
     {
       stage: "Dev",
       environment: { env: { VITE_DEV_SERVER_URL: "http://localhost:5173" } },
+    },
+    {
+      stage: "Roles Preview",
+      environment: { distribution: "roles-preview" as const },
     },
   ])("uses a valid native User-Agent product name for $stage", ({ stage, environment }) => {
     const calls: ElectronAppCalls = {

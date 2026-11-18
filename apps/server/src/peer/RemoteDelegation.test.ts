@@ -37,8 +37,13 @@ import * as Tracer from "effect/Tracer";
 import * as TestClock from "effect/testing/TestClock";
 import type * as SqlClient from "effect/sql/SqlClient";
 import { McpSchema, McpServer } from "effect/ai";
+import {
+  AGENT_ROLE_INSTRUCTION_DEFAULTS,
+  formatAgentRoleInstruction,
+} from "@t3tools/shared/agentRoleInstructions";
 
 import * as ServerConfig from "../config.ts";
+import { taskPrompt } from "../mcp/delegatedTaskModes.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { idleThreadProjection, liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
@@ -1426,7 +1431,10 @@ it.effect("a task's result is its own run's whole last reply, not a later run's"
       const { taskId } = result.structuredContent as { taskId: NodeId };
       // The role reaches the thread there, as it does a child here.
       expect(yield* Ref.get(thread.message)).toBe(
-        "Act as the review sub-agent for this task.\n\nReview the diff.",
+        taskPrompt(
+          { task: "Review the diff.", role: "review" },
+          formatAgentRoleInstruction("review", AGENT_ROLE_INSTRUCTION_DEFAULTS.review),
+        ),
       );
 
       // A reply longer than one read, then a later run's reply on the same thread.
