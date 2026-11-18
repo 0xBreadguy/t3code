@@ -48,6 +48,24 @@ fresh or copy their existing setup before launching the trial. Use
 terminal can start fresh without asking, and opening the desktop app directly
 does not offer the copy.
 
+If T3 Code is still importing older conversations into its current format, the
+copy stops before creating a trial. Open the source setup in a compatible T3 Code
+version, let that import finish, then retry. The copy does not change the source.
+
+The trial does not copy provider configurations. If a saved selection uses a
+custom provider, configured account, or a provider that starts disabled in a fresh
+setup, the copy stops before creating a trial.
+Choose the standard provider for the same driver explicitly, then retry, for
+example `t3 trial --copy-from ~/.t3 --map-provider work-codex=codex`. Repeat
+`--map-provider` for each replacement. A configured standard provider can map
+to itself (`--map-provider codex=codex`) to choose its trial defaults. Explicit
+mappings also enable the selected trial provider; for example,
+`--map-provider grok=grok` enables Grok with its trial defaults. Check
+that the trial's provider is signed into the account you intend to use. Mappings
+replace provider identities and preserve saved model choices. If the source
+provider is missing, select a compatible model in the trial before sending.
+Conflicting model preferences must be reconciled in the source before retrying.
+
 New conversations and settings changes stay in the trial. The copy leaves
 attachments, provider sessions, credentials, device pairings, and background
 work in your original setup. Your project folders stay where they are.

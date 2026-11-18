@@ -98,6 +98,7 @@ export const serveCommand = Command.make("serve", serveCommandFlags).pipe(
 const prepareTrial = Effect.fn("server.prepareTrial")(function* (
   flags: CliServerFlags & {
     readonly copyFrom: Option.Option<string>;
+    readonly mapProvider: ReadonlyArray<string>;
   },
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -114,9 +115,13 @@ const prepareTrial = Effect.fn("server.prepareTrial")(function* (
   const { assertSeparateSetupHome, copySetup, initializeFreshTrial } = yield* Effect.promise(
     () => import("../persistence/SetupCopy.ts"),
   );
+  const { parseSetupCopyProviderMappings } = yield* Effect.promise(
+    () => import("../persistence/SetupCopyProviders.ts"),
+  );
+  const providerMappings = yield* parseSetupCopyProviderMappings(flags.mapProvider);
   yield* assertSeparateSetupHome(upstreamHome, baseDir);
   const state = path.join(baseDir, "userdata");
-  const explicitCopy = Option.isSome(flags.copyFrom);
+  const explicitCopy = Option.isSome(flags.copyFrom) || flags.mapProvider.length > 0;
   const warning =
     "New conversations and settings changes in the trial won't sync back to T3 Code. Trial work defaults to separate Git worktrees. Choosing Local in project settings edits the original checkout.";
   if (
@@ -136,7 +141,11 @@ const prepareTrial = Effect.fn("server.prepareTrial")(function* (
         }),
       ));
     if (copy) {
-      const result = yield* copySetup({ sourceHome: source, targetHome: baseDir });
+      const result = yield* copySetup({
+        sourceHome: source,
+        targetHome: baseDir,
+        providerMappings,
+      });
       yield* Console.log(
         `Copied ${result.projects} projects and ${result.threads} conversations to ${baseDir}.`,
       );
@@ -154,6 +163,12 @@ const prepareTrial = Effect.fn("server.prepareTrial")(function* (
 
 export const trialCommand = Command.make("trial", {
   ...sharedServerCommandFlags,
+  mapProvider: Flag.String("map-provider").pipe(
+    Flag.atLeast(0),
+    Flag.withDescription(
+      "Choose and enable a standard trial provider for a copied selection (source=destination). Repeat for each replacement.",
+    ),
+  ),
   copyFrom: Flag.String("copy-from").pipe(
     Flag.optional,
     Flag.withDescription(

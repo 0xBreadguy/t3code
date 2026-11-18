@@ -3,13 +3,10 @@ import {
   ModelSelection,
   ProjectId,
   OrchestrationV2AppThreadJson,
-  OrchestrationV2ConversationMessageJson,
-  ServerSettings,
   ThreadId,
   type OrchestrationV2AppThread,
 } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
-import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -29,32 +26,32 @@ import {
 } from "../orchestration-v2/trialWorkspace.ts";
 import * as OrchestrationEventStore from "./OrchestrationEventStore.ts";
 import * as SqlitePersistence from "./Sqlite.ts";
+import {
+  resolveSetupCopyProviders,
+  SetupCopyProviderError,
+  type SetupCopyProviderMappings,
+} from "./SetupCopyProviders.ts";
 
 export class SetupCopyError extends Schema.TaggedError<SetupCopyError>()("SetupCopyError", {
   message: Schema.String,
   cause: Schema.optional(Schema.Defect()),
 }) {}
 
+export class SetupCopyPendingLegacyError extends Schema.TaggedError<SetupCopyPendingLegacyError>()(
+  "SetupCopyPendingLegacyError",
+  { pendingThreads: Schema.Number },
+) {
+  override get message(): string {
+    return `This T3 setup has ${this.pendingThreads} legacy conversations awaiting import. Open the original setup with a compatible T3 Code version, let its conversation import finish, then retry the trial copy. The original setup and trial were not changed.`;
+  }
+}
+
 const decodeThread = Schema.decodeEffect(Schema.fromJsonString(OrchestrationV2AppThreadJson));
-const decodeMessage = Schema.decodeEffect(
-  Schema.fromJsonString(OrchestrationV2ConversationMessageJson),
-);
 const trialDefaults = {
   defaultThreadEnvMode: "worktree",
   newWorktreesStartFromOrigin: false,
 } as const;
 const encodeSettings = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
-
-const decodePreferences = Schema.decodeEffect(
-  fromLenientJson(
-    Schema.Struct({
-      defaultAppearance: ServerSettings.fields.defaultAppearance,
-      favorites: ServerSettings.fields.favorites,
-      responseStreamingMode: ServerSettings.fields.responseStreamingMode,
-      providerModelPreferences: ServerSettings.fields.providerModelPreferences,
-    }),
-  ),
-);
 
 const decodeProject = Schema.decodeUnknownEffect(
   Schema.Struct({
@@ -71,8 +68,24 @@ const decodeProject = Schema.decodeUnknownEffect(
 
 const readSource = Effect.fn("SetupCopy.readSource")(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const projection = yield* ProjectionStore.ProjectionStoreV2;
   return yield* sql.withTransaction(
     Effect.gen(function* () {
+      const [pending] = yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count FROM (
+          SELECT thread.thread_id FROM projection_threads thread
+          WHERE NOT EXISTS (
+            SELECT 1 FROM orchestration_events event INDEXED BY orchestration_events_v2_created_threads_idx
+            WHERE event.application_event_version = 2 AND event.aggregate_kind = 'thread'
+              AND event.stream_id = thread.thread_id AND event.event_type = 'thread.created'
+          )
+          UNION
+          SELECT thread_id FROM orchestration_v2_legacy_imports
+          WHERE transcript_imported_at IS NULL
+        )`;
+      if (pending !== undefined && pending.count > 0) {
+        return yield* new SetupCopyPendingLegacyError({ pendingThreads: pending.count });
+      }
       const columns = yield* sql<{ readonly name: string }>`PRAGMA table_info(projection_projects)`;
       const projectRows = yield* sql`
         SELECT project_id AS "projectId", title, workspace_root AS "workspaceRoot",
@@ -90,13 +103,30 @@ const readSource = Effect.fn("SetupCopy.readSource")(function* () {
       const threads = yield* Effect.forEach(rows, ({ payload_json }) => decodeThread(payload_json));
       const transcripts = yield* Effect.forEach(threads, (thread) =>
         Effect.gen(function* () {
-          const rows = yield* sql<{ readonly payload_json: string }>`
-            SELECT payload_json FROM orchestration_v2_projection_messages
-            WHERE thread_id = ${thread.id}
-            ORDER BY created_at, message_id`;
-          const messages = yield* Effect.forEach(rows, ({ payload_json }) =>
-            decodeMessage(payload_json),
-          );
+          const messages: Array<{
+            role: "user" | "assistant";
+            text: string;
+            createdAt: DateTime.Utc;
+          }> = [];
+          let afterPosition = -1;
+          while (true) {
+            const page = yield* projection.getTimelinePage(thread.id, {
+              view: "messages",
+              afterPosition,
+              limit: 500,
+            });
+            for (const { item } of page.items) {
+              if (item.type !== "user_message" && item.type !== "assistant_message") continue;
+              messages.push({
+                role: item.type === "user_message" ? "user" : "assistant",
+                text: item.text,
+                createdAt: item.startedAt ?? item.completedAt ?? item.updatedAt,
+              });
+            }
+            const last = page.items.at(-1);
+            if (!page.hasMore || last === undefined) break;
+            afterPosition = last.position;
+          }
           return { thread, messages };
         }),
       );
@@ -251,6 +281,7 @@ export const assertSeparateSetupHome = Effect.fn("SetupCopy.assertSeparateHome")
 export const copySetup = Effect.fn("SetupCopy.copy")(function* (input: {
   readonly sourceHome: string;
   readonly targetHome: string;
+  readonly providerMappings?: SetupCopyProviderMappings;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -270,23 +301,60 @@ export const copySetup = Effect.fn("SetupCopy.copy")(function* (input: {
   }
 
   const source = yield* readSource().pipe(
-    Effect.provide(NodeSqliteClient.layer({ filename: sourceDb, readonly: true })),
-    Effect.mapError(
-      (cause) =>
-        new SetupCopyError({
-          message:
-            "This T3 setup could not be read. Choose Start fresh or try a compatible T3 V2 setup.",
-          cause,
-        }),
+    Effect.provide(
+      ProjectionStore.layer.pipe(
+        Layer.provideMerge(NodeSqliteClient.layer({ filename: sourceDb, readonly: true })),
+      ),
+    ),
+    Effect.mapError((cause) =>
+      cause._tag === "SetupCopyPendingLegacyError"
+        ? cause
+        : new SetupCopyError({
+            message:
+              "This T3 setup could not be read. Choose Start fresh or try a compatible T3 V2 setup.",
+            cause,
+          }),
     ),
   );
   const settingsPath = path.join(sourceState, "settings.json");
-  const preferences = (yield* fs.exists(settingsPath))
-    ? yield* fs.readFileString(settingsPath).pipe(
-        Effect.flatMap(decodePreferences),
-        Effect.orElseSucceed(() => ({})),
-      )
-    : {};
+  const settingsJson = (yield* fs.exists(settingsPath))
+    ? yield* fs
+        .readFileString(settingsPath)
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new SetupCopyProviderError({ reason: "settings-unreadable", instanceIds: [], cause }),
+          ),
+        )
+    : undefined;
+  const providers = yield* resolveSetupCopyProviders({
+    ...(settingsJson === undefined ? {} : { settingsJson }),
+    modelSelections: [
+      ...source.projects.flatMap((project) =>
+        project.defaultModelSelection === null ? [] : [project.defaultModelSelection],
+      ),
+      ...source.transcripts.map(({ thread }) => thread.modelSelection),
+    ],
+    instanceIds: source.transcripts.map(({ thread }) => thread.providerInstanceId),
+    ...(input.providerMappings === undefined ? {} : { mappings: input.providerMappings }),
+  });
+  const resolvedSource = {
+    projects: source.projects.map((project) => ({
+      ...project,
+      defaultModelSelection:
+        project.defaultModelSelection === null
+          ? null
+          : providers.modelSelection(project.defaultModelSelection),
+    })),
+    transcripts: source.transcripts.map(({ thread, messages }) => ({
+      messages,
+      thread: {
+        ...thread,
+        providerInstanceId: providers.instanceId(thread.providerInstanceId),
+        modelSelection: providers.modelSelection(thread.modelSelection),
+      },
+    })),
+  };
 
   yield* fs.makeDirectory(targetHome, { recursive: true });
   const staging = yield* fs.makeTempDirectoryScoped({
@@ -295,7 +363,7 @@ export const copySetup = Effect.fn("SetupCopy.copy")(function* (input: {
   });
   const dbPath = path.join(staging, "statev2.sqlite");
   const stores = Layer.mergeAll(EventStore.layer, ProjectionStore.layer);
-  yield* writeCopy(source).pipe(
+  yield* writeCopy(resolvedSource).pipe(
     Effect.provide(
       Layer.mergeAll(
         ProjectStore.layer,
@@ -308,7 +376,7 @@ export const copySetup = Effect.fn("SetupCopy.copy")(function* (input: {
   yield* fs.writeFileString(
     path.join(staging, "settings.json"),
     yield* encodeSettings({
-      ...preferences,
+      ...providers.preferences,
       ...trialDefaults,
       projectSettingsOverrides: Object.fromEntries(
         source.projects.map((project) => [
