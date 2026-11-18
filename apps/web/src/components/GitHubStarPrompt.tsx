@@ -93,7 +93,7 @@ function celebrate() {
 }
 
 // Resolves after IDLE_MS without input while this window has focus.
-function waitForIdle() {
+export function waitForIdle() {
   return new Promise<void>((resolve) => {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const restart = () => {
