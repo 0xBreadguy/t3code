@@ -1,3 +1,4 @@
+import { usesTrialWorkspace } from "./trialWorkspace.ts";
 import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
@@ -1106,7 +1107,7 @@ const make = Effect.gen(function* () {
   });
 
   const failPreparedRun = (
-    input: Pick<PreparationInput, "commandId">,
+    input: Pick<PreparationInput, "commandId"> & Partial<Pick<PreparationInput, "projectId">>,
     threadId: ThreadId,
     runId: RunId | null,
     cause: unknown,
@@ -1125,7 +1126,10 @@ const make = Effect.gen(function* () {
             runId,
             failure: makeProviderFailure({
               cause,
-              message: failureDetail(cause),
+              message:
+                input.projectId !== undefined && usesTrialWorkspace(input.projectId, threadId)
+                  ? `${failureDetail(cause)} To use the original checkout, set this project's default workspace to Local in Settings, then retry.`
+                  : failureDetail(cause),
               class: "validation_error",
               retryable: false,
             }),
@@ -1204,11 +1208,24 @@ const make = Effect.gen(function* () {
 
   const launch: ThreadLaunchService["Service"]["launch"] = Effect.fn("ThreadLaunchService.launch")(
     function* (request) {
-      // Scratch has no Git repository. Normalize before folder allocation so
-      // durable preparation and retries use the thread's own Scratch folder.
-      const input: ThreadLaunchInput =
-        request.workspaceStrategy.type === "worktree" &&
-        (yield* managedFolders.isScratchProject(request.projectId))
+      const useTrialWorktree =
+        request.workspaceStrategy.type === "root" &&
+        usesTrialWorkspace(request.projectId) &&
+        (yield* serverSettings.getSettings.pipe(Effect.orDie)).projectSettingsOverrides[
+          request.projectId
+        ]?.defaultThreadEnvMode !== "local";
+      // Scratch has no Git repository. Normalize before allocating its own folder.
+      const input: ThreadLaunchInput = useTrialWorktree
+        ? {
+            ...request,
+            workspaceStrategy: {
+              type: "worktree",
+              baseRef: request.workspaceStrategy.branch ?? "HEAD",
+              startFromOrigin: false,
+            },
+          }
+        : request.workspaceStrategy.type === "worktree" &&
+            (yield* managedFolders.isScratchProject(request.projectId))
           ? { ...request, workspaceStrategy: { type: "root" } }
           : request;
       yield* ProjectCloneTracker.rejectCommandsDuringClone(cloneTracker, {

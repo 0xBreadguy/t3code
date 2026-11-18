@@ -73,6 +73,7 @@ import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const projectId = ProjectId.make("project:launch-test");
+const copiedProjectId = ProjectId.make("setup-copy-launch-test");
 const otherProjectId = ProjectId.make("project:launch-other");
 const encodeThreadProjection = Schema.encodeEffect(OrchestrationV2ThreadProjectionJson);
 const modelSelection = {
@@ -144,12 +145,12 @@ interface HarnessOptions {
 function makeHarness(options: HarnessOptions = {}) {
   const layerDatabase = SqlitePersistence.layerMemory;
   const layerRegistry = ProviderAdapterRegistry.layerFromAdapters(options.adapters ?? [adapter]);
+  const layerServerSettings = ServerSettings.layerTest(options.serverSettings);
   const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
     { name: "thread-launch" },
     layerRegistry,
-    { databaseLayer: layerDatabase, runEffectWorker: false },
+    { databaseLayer: layerDatabase, runEffectWorker: false, settingsLayer: layerServerSettings },
   );
-  const layerServerSettings = ServerSettings.layerTest(options.serverSettings);
   const layerReceipts = CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase));
   const layerThreadManagement = ThreadManagement.layer.pipe(
     Layer.provide(layerOrchestrator),
@@ -202,9 +203,11 @@ function makeHarness(options: HarnessOptions = {}) {
         Effect.succeed(
           id === projectId
             ? Option.some(project)
-            : id === otherProjectId
-              ? Option.some(otherProject)
-              : Option.none(),
+            : id === copiedProjectId
+              ? Option.some({ ...project, id })
+              : id === otherProjectId
+                ? Option.some(otherProject)
+                : Option.none(),
         ),
       getByWorkspaceRoot: () => Effect.succeedSome(project),
       workspaceScanDirectory: () => Effect.die("unused"),
@@ -1632,6 +1635,136 @@ it.effect("names the missing base branch when a worktree cannot be created from 
       ),
     ),
   ),
+);
+
+it.effect("prepares a worktree when a client sends a root launch in a copied project", () => {
+  const harness = makeHarness({ runSetup: () => Effect.never });
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const input = launchInput({
+      command: "launch-copied-project",
+      thread: "new-trial-thread",
+      message: "Start fresh in this project.",
+      workspace: { type: "root" },
+    });
+    const result = yield* launches.launch({ ...input, projectId: copiedProjectId });
+    assert.deepEqual(result.projection.runs[0]?.workspacePreparation, {
+      type: "worktree",
+      baseRef: "HEAD",
+      startFromOrigin: false,
+    });
+    assert.equal(result.projection.runs[0]?.status, "preparing");
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect.each([true, false])(
+  "continues copied history with a separate checkout (worktree available: %s)",
+  (available) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const git = yield* GitVcsDriver.GitVcsDriver;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "launch-copied-thread-" });
+      const cwd = `${directory}/repo`;
+      const worktreePath = `${directory}/worktree`;
+      yield* fs.makeDirectory(cwd);
+      const command = (at: string, args: string[]) =>
+        git.execute({ operation: "launch-test", cwd: at, args });
+      yield* command(cwd, ["init", "-b", "main"]);
+      yield* command(cwd, ["config", "user.name", "Test"]);
+      yield* command(cwd, ["config", "user.email", "test@example.test"]);
+      yield* fs.writeFileString(`${cwd}/file.txt`, "original");
+      yield* command(cwd, ["add", "file.txt"]);
+      yield* command(cwd, ["commit", "-m", "initial"]);
+      const originalHead = (yield* command(cwd, ["rev-parse", "HEAD"])).stdout;
+      yield* fs.writeFileString(`${cwd}/file.txt`, "uncommitted");
+      if (!available) {
+        yield* fs.makeDirectory(worktreePath);
+        yield* fs.writeFileString(`${worktreePath}/keep.txt`, "occupied");
+      }
+
+      const harness = makeHarness({
+        hasCommit: ({ refName }) =>
+          git.resolveCommit({ cwd, revision: refName }).pipe(Effect.isSuccess),
+        createWorktree: (input, options) =>
+          git.createWorktree({ ...input, cwd, path: worktreePath }, options),
+      });
+      yield* Effect.gen(function* () {
+        const launches = yield* ThreadLaunch.ThreadLaunchService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const launched = yield* launches.launch(
+          launchInput({ command: "open-copied", thread: "setup-copy-continuation" }),
+        );
+        const threadId = launched.threadId;
+        const commandId = CommandId.make("continue-copied");
+        yield* threads.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId,
+          threadId,
+          messageId: MessageId.make("continue-copied-message"),
+          text: "Continue this conversation.",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+        });
+        const [effect] = yield* outbox.listByCommandId(commandId);
+        if (effect?.request.type !== "workspace.prepare") {
+          return yield* Effect.die("A copied thread must prepare a workspace before starting.");
+        }
+        yield* launches.prepareRun({ commandId, threadId, runId: effect.request.runId });
+        const ready = yield* preparationSettled(threadId);
+        if (available) {
+          assert.equal(
+            ready.runs[0]?.status,
+            "starting",
+            ready.turnItems.find((item) => item.type === "error")?.failure.message,
+          );
+          assert.equal(ready.thread.worktreePath, worktreePath);
+          assert.equal(yield* fs.readFileString(`${worktreePath}/file.txt`), "original");
+          yield* fs.writeFileString(`${worktreePath}/file.txt`, "trial edit");
+          yield* command(worktreePath, ["commit", "-am", "trial"]);
+        } else {
+          assert.equal(ready.runs[0]?.status, "failed");
+          assert.isNull(ready.thread.worktreePath);
+          assert.isEmpty(ready.providerTurns);
+          assert.include(
+            ready.turnItems.find((item) => item.type === "error")?.failure.message ?? "",
+            "default workspace to Local",
+          );
+          const settings = yield* ServerSettings.ServerSettingsService;
+          yield* settings.updateSettings({
+            projectSettingsOverrides: { [projectId]: { defaultThreadEnvMode: "local" } },
+          });
+          yield* launches.retryPreparation({
+            commandId: CommandId.make("retry-copied-locally"),
+            threadId,
+            runId: effect.request.runId,
+          });
+          yield* threads.streamStoredEventsFrom({ threadId }).pipe(
+            Stream.filter(
+              ({ event, commandId }) =>
+                event.type === "run.updated" &&
+                (commandId === "retry-copied-locally:release" ||
+                  commandId === "retry-copied-locally:fail"),
+            ),
+            Stream.runHead,
+          );
+          const local = yield* threads.getThreadProjection(threadId);
+          assert.equal(local.runs[0]?.workspacePreparation?.type, "root");
+          assert.equal(local.runs[0]?.status, "starting");
+        }
+        assert.equal(yield* fs.readFileString(`${cwd}/file.txt`), "uncommitted");
+        assert.equal((yield* command(cwd, ["rev-parse", "HEAD"])).stdout, originalHead);
+      }).pipe(Effect.provide(harness.layer));
+    }).pipe(
+      Effect.provide(
+        GitVcsDriver.layer.pipe(
+          Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "launch-copy-git-" })),
+          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        ),
+      ),
+    ),
 );
 
 it.effect("rejects a preparation retry after the project disables its provider", () => {
