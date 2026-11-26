@@ -91,4 +91,3 @@ delegating. An explicit task target, direct-work request, or native-tooling requ
 Settings writes for a delegation mode are gated on the server advertising
 `supportsAgentRoleDelegationModes`; older servers drop the key, so the client leaves the mode
 unsupported there instead of saving a value the server would discard.
-

@@ -27,7 +27,6 @@ import {
   ThreadId,
   TurnItemId,
   ProjectId,
-  EnvironmentId,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   type OrchestrationV2ThreadProjection,
   OrchestrationV2DomainEvent,

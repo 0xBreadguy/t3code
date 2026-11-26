@@ -3018,8 +3018,12 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       ...(rolesPreview ? { packageName: ROLES_PREVIEW_LINUX_EXECUTABLE_NAME } : {}),
       // FPM runs outside the staged app directory, so source paths must be absolute.
       fpm: [
-        `${path.join(repoRoot, "apps/desktop/resources/linux/com.t3tools.t3code.metainfo.xml")}=/usr/share/metainfo/com.t3tools.t3code.metainfo.xml`,
-        `${path.join(repoRoot, "LICENSE")}=/usr/share/doc/t3code/copyright`,
+        ...(rolesPreview
+          ? []
+          : [
+              `${path.join(repoRoot, "apps/desktop/resources/linux/com.t3tools.t3code.metainfo.xml")}=/usr/share/metainfo/com.t3tools.t3code.metainfo.xml`,
+            ]),
+        `${path.join(repoRoot, "LICENSE")}=/usr/share/doc/${rolesPreview ? ROLES_PREVIEW_LINUX_EXECUTABLE_NAME : "t3code"}/copyright`,
       ],
       // Debian 13 and Ubuntu 24.04 use 64-bit-time names; retain old-name fallbacks.
       depends: [

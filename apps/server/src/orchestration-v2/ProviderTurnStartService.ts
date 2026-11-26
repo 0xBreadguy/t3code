@@ -16,7 +16,6 @@ import {
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
   isDeliveredProviderTurn,
-  isCompactionCommandMessage,
   isDelegatedAppThread,
   isListedThreadLineage,
   parseGoalCommand,
@@ -2098,7 +2097,8 @@ export const layer: Layer.Layer<
         retryHandoff.attachments.length > 0 ||
         sideChatHandoff !== undefined ||
         restartNote !== "" ||
-        noteContinuation || roleCatalog !== null;
+        noteContinuation ||
+        roleCatalog !== null;
       // Pending context turns the resume into a prompted turn, which needs no native resume.
       if (
         manualResume &&

@@ -639,6 +639,13 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         "com.t3tools.T3Code.RolesPreview",
       );
       assert.nestedPropertyVal(preview, "deb.packageName", "t3code-roles-preview");
+      const previewFiles = (preview.deb as { fpm: string[] }).fpm.map(
+        (entry) => entry.split("=")[1],
+      );
+      const standardFiles = (standard.deb as { fpm: string[] }).fpm.map(
+        (entry) => entry.split("=")[1],
+      );
+      assert.isEmpty(previewFiles.filter((file) => standardFiles.includes(file)));
       assert.equal(standard.appId, "com.t3tools.t3code");
       assert.equal(standard.productName, resolveDesktopProductName("0.1.10-preview.20261116.1"));
       assert.notEqual(preview.productName, standard.productName);
